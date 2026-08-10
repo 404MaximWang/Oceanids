@@ -1,0 +1,72 @@
+[project]
+name = "oceanids"
+version = "0.1.0"
+description = "Agentic bug-finding baseline harness (discoverer / explorer pool / probe verifier)"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=2.53.0",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.15.0",
+]
+
+[project.scripts]
+oceanids = "oceanids.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/oceanids"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.15",
+    "ruff>=0.11",
+    "pre-commit>=4.0",
+    "pytest>=9.1.1",
+]
+
+# ---------- 类型强制：mypy 全严格 ----------
+[tool.mypy]
+python_version = "3.12"
+strict = true                       # 开启全部严格检查
+disallow_untyped_defs = true        # 函数签名必须完整标注（参数+返回值）
+disallow_incomplete_defs = true     # 标一半的也算未标注
+disallow_untyped_calls = true       # 禁止调用无类型的函数
+disallow_any_explicit = false       # 允许显式写 Any（但下方会警告）
+warn_return_any = true              # 返回 Any 视为告警
+disallow_any_generics = true        # list/dict 裸用报错，必须 list[int] 这种
+disallow_subclassing_any = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true         # Optional 必须显式
+strict_equality = true
+check_untyped_defs = true
+show_error_codes = true
+
+# 第三方库无 stub 时不阻塞（按需补充）
+[[tool.mypy.overrides]]
+module = ["docker.*", "tree_sitter.*"]
+ignore_missing_imports = true
+
+# ---------- 注解强制：ruff ANN 规则组 ----------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",      # 基础错误
+    "ANN",              # flake8-annotations：函数参数/返回值必须标注
+    "I",                # import 排序
+    "UP",               # 新式语法（X | Y 而非 Union）
+    "B",                # bugbear：常见坑
+    "SIM",              # 简化建议
+]
+ignore = [
+    "ANN401",           # 显式 Any 不拦（mypy 已管）
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["oceanids"]
