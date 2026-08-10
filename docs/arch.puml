@@ -1,0 +1,82 @@
+@startuml
+!theme plain
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+
+title Oceanids
+
+database "SQLite" as DB {
+    rectangle "表1: candidate_issues\n(子代理原始输出 | 状态)" as T1
+    rectangle "表2: confirmed_bugs\n(经 Probe 证实的真 Bug)" as T2
+}
+
+package "发现者" {
+    [Overview 生成器] as Overview
+    [任务分发器] as Dispatch
+}
+
+package "子代理池" {
+    [探索代理 1] as SA1
+    [探索代理 2] as SA2
+    [探索代理 3] as SA3
+}
+
+package "验证者" {
+    [Probe 生成器] as ProbeGen
+    [Probe 审计员\n静态审查\n(不执行)] as Audit
+    [沙箱执行引擎\n编译|运行|比对] as Sandbox
+    [独立 Checker\n干净环境重跑\n只信自跑结果] as Checker
+}
+
+' Phase 1-2: 同前
+[目标代码库] --> Overview
+Overview --> Dispatch
+Dispatch --> SA1
+Dispatch --> SA2
+Dispatch --> SA3
+
+note right of Dispatch
+  单函数单 agent:
+  一次定终身
+  成功才标记(落库可续跑)
+  失败不烧机会
+end note
+
+SA1 --> T1 : INSERT\n(问题函数, 问题, 触发方法)
+SA2 --> T1 : INSERT
+SA3 --> T1 : INSERT
+
+' 法一: 写入时键去重
+note bottom of T1
+  法一: 键去重
+  UNIQUE(函数,CWE id)
+  INSERT OR IGNORE
+end note
+
+' Phase 3: 验证者直接订阅表1
+T1 --> ProbeGen : SELECT pending
+ProbeGen --> Audit : Probe\n(输入/预期输出)
+
+' Phase 3.4: 审计门（打回重写，耗尽则拒）
+Audit --> ProbeGen : invalid → 打回重写\n(上限 probe_retries)
+Audit --> T1 : 重写耗尽 → UPDATE\n(status='rejected')
+Audit --> Sandbox : ok → 放行
+
+' 硬约束（机械保证，非 prompt）
+note right of Sandbox
+  硬约束:
+  仅公开符号链接
+  依赖哈希锁
+  sanitizer=oracle
+end note
+
+' Phase 3.5: 生成/执行/判定三权分离
+Sandbox --> Checker : 执行证据
+
+' Phase 4: 验证结果分流
+Checker --> T2 : 真阳性 → INSERT 表2\n法二: 证据去重\n(top-3帧/违反点)
+Checker --> T1 : 假阳性 → UPDATE\n(status='rejected')
+
+T2 --> [Bug 报告] : 全部经 Probe 证实
+
+@enduml
