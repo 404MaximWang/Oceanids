@@ -16,6 +16,17 @@ from oceanids.models import CandidateIssue, Probe
 
 _AUDIT_SCHEMA = '{"verdict": "ok"|"invalid", "feedback": str}'
 
+_AUDIT_EXAMPLES = """\
+Examples of valid responses (reply with ONLY the JSON object, no markdown or prose):
+
+{"verdict": "ok", "feedback": ""}
+
+{"verdict": "invalid", "feedback": "The probe hard-codes the buggy output as the expected result, so it cannot distinguish a fix from the bug."}
+
+{"verdict": "invalid", "feedback": "The trigger input never reaches the vulnerable path because the function returns early on empty input."}
+
+Important: feedback is a JSON string. If it contains quotes or backslashes they must be escaped, e.g.: \\" and \\\\\\."""
+
 
 class AuditVerdict:
     """The auditor's decision on one probe."""
@@ -48,7 +59,7 @@ def audit_probe(
     target_root: Path,
     llm: LLMClient,
     *,
-    max_retries: int = 1,
+    max_retries: int = 3,
 ) -> AuditVerdict | None:
     """Statically audit one probe against its candidate and the target source.
 
@@ -71,6 +82,7 @@ def audit_probe(
         "(b) the probe's inputs can actually reach the targeted path inside the target "
         "function — a probe that can never trigger the described bug is invalid.\n"
         f"Reply with JSON: {_AUDIT_SCHEMA}\n\n"
+        f"{_AUDIT_EXAMPLES}\n\n"
         f"Probe script:\n```\n{probe.script}\n```\n\n"
         f"Target source ({candidate.file}):\n```\n{source}\n```"
     )
