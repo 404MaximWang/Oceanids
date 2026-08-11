@@ -1,15 +1,16 @@
-"""Sandbox protocol, oracle primitives, and the dependency hash lock.
+"""Sandbox protocol and oracle primitives.
 
 Separation of powers (docs/arch.puml): a sandbox only executes; it never
 decides. Oracle derivation (exit code / sanitizer markers / top stack frames)
-is pure data collection — the verdict belongs to the checker alone.
+is pure data collection — the verdict belongs to the checker alone. The
+pipeline runs on a frozen snapshot of the target (oceanids.freeze), so no
+dependency hash lock is needed — drift is impossible by construction.
 """
 
 import hashlib
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Protocol
 
 # Substrings treated as sanitizer/analyser firings when seen on stdout/stderr.
@@ -35,10 +36,6 @@ class SandboxUnavailableError(RuntimeError):
     """Raised when a configured sandbox backend cannot run on this host."""
 
 
-class DependencyDriftError(RuntimeError):
-    """Raised when the target tree no longer matches the locked hash manifest."""
-
-
 @dataclass(frozen=True)
 class ExecutionResult:
     """Raw outcome of one sandboxed execution; no judgement attached."""
@@ -56,36 +53,6 @@ class Sandbox(Protocol):
     def run(self, command: Sequence[str], *, timeout_s: int) -> ExecutionResult:
         """Execute ``command`` in a fresh, clean environment."""
         ...
-
-
-def hash_tree(root: Path) -> dict[str, str]:
-    """Dependency hash lock manifest: sha256 for every file under ``root``."""
-    manifest: dict[str, str] = {}
-    for path in sorted(root.rglob("*")):
-        if path.is_file():
-            rel = path.relative_to(root).as_posix()
-            manifest[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return manifest
-
-
-def verify_tree(root: Path, expected: Mapping[str, str]) -> None:
-    """Refuse execution when the target tree drifted from the locked manifest."""
-    current = hash_tree(root)
-    if current == expected:
-        return
-    missing = sorted(set(expected) - set(current))
-    added = sorted(set(current) - set(expected))
-    changed = sorted(k for k in set(current) & set(expected) if current[k] != expected[k])
-    parts = []
-    if missing:
-        parts.append(f"missing: {missing}")
-    if added:
-        parts.append(f"added: {added}")
-    if changed:
-        parts.append(f"changed: {changed}")
-    raise DependencyDriftError(
-        "dependency hash lock violated; refusing to execute (" + "; ".join(parts) + ")"
-    )
 
 
 def detect_sanitizer_hits(text: str) -> tuple[str, ...]:

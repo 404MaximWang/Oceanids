@@ -1,4 +1,4 @@
-"""Sandbox backends: local execution, hash lock, oracle helpers, bwrap/qemu guards."""
+"""Sandbox backends: local execution, oracle helpers, bwrap/qemu guards."""
 
 import shutil
 import sys
@@ -7,12 +7,9 @@ from pathlib import Path
 import pytest
 
 from oceanids.sandbox.base import (
-    DependencyDriftError,
     SandboxUnavailableError,
     extract_top_frames,
-    hash_tree,
     make_evidence_key,
-    verify_tree,
 )
 from oceanids.sandbox.bwrap import BwrapSandbox
 from oceanids.sandbox.local import LocalSandbox
@@ -76,18 +73,6 @@ def test_local_sandbox_fresh_copy_per_run(tmp_path: Path) -> None:
     second = sandbox.run([sys.executable, str(script)], timeout_s=30)
     assert first.stdout.strip() == "clean"
     assert second.stdout.strip() == "clean"  # no state leaks between runs
-
-
-def test_dependency_hash_lock(tmp_path: Path) -> None:
-    target = _target(tmp_path)
-    manifest = hash_tree(target)
-    verify_tree(target, manifest)  # no drift: does not raise
-    (target / "mod.py").write_text("# tampered\n", encoding="utf-8")
-    with pytest.raises(DependencyDriftError):
-        verify_tree(target, manifest)
-    (target / "mod.py").unlink()
-    with pytest.raises(DependencyDriftError):
-        verify_tree(target, manifest)
 
 
 def test_extract_top_frames_normalises_workdir() -> None:

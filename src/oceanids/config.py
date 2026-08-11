@@ -25,6 +25,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "OCEANIDS_PROBES_DIR": ("paths", "probes_dir"),
     "OCEANIDS_REPORT": ("paths", "report"),
     "OCEANIDS_POOL_SIZE": ("run", "pool_size"),
+    "OCEANIDS_VERIFY_POOL_SIZE": ("run", "verify_pool_size"),
     "OCEANIDS_SANDBOX": ("run", "sandbox"),
     "OCEANIDS_LLM": ("run", "llm"),
     "OCEANIDS_EXPLORER_LLM": ("run", "explorer_llm"),
@@ -79,6 +80,7 @@ class LLMCfg(_Section):
 
 class RunCfg(_Section):
     pool_size: int = Field(default=4, gt=0)
+    verify_pool_size: int = Field(default=4, gt=0)
     sandbox: Literal["local", "bwrap", "qemu"] = "local"
     # Unified default backend for every stage; the per-stage fields below win
     # when set. Per-stage fields default to None (fall back to llm). The unified
@@ -94,6 +96,9 @@ class RunCfg(_Section):
 
 
 class PathsCfg(_Section):
+    # Relative values resolve under <target>/.oceanids/ (artifacts follow the
+    # target); absolute values are used as-is. Resolution lives in
+    # orchestrator.resolve_artifact_path and applies to toml/env/CLI alike.
     db: str = "oceanids.db"
     probes_dir: str = "probes"
     report: str = "report.md"

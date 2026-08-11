@@ -1,13 +1,13 @@
 """Phase 3.5 + 4: the independent checker.
 
-For every probe the checker verifies the dependency hash lock, builds a
-brand-new clean sandbox instance, re-runs the probe itself and trusts only its
-own evidence. True positives land in confirmed_bugs (evidence-key dedup,
-arch.puml 法二) and flip the candidate to confirmed; false positives flip it to
-rejected.
+For every probe the checker builds a brand-new clean sandbox instance, re-runs
+the probe itself and trusts only its own evidence. True positives land in
+confirmed_bugs (evidence-key dedup, arch.puml 法二) and flip the candidate to
+confirmed; false positives flip it to rejected. The target cannot drift
+mid-run: the pipeline handed the checker a frozen snapshot (oceanids.freeze).
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 
 from oceanids.db import CandidateStore, ConfirmedStore
@@ -26,7 +26,6 @@ from oceanids.sandbox.base import (
     detect_sanitizer_hits,
     extract_top_frames,
     make_evidence_key,
-    verify_tree,
 )
 
 
@@ -36,7 +35,6 @@ class Checker:
     def __init__(
         self,
         target_root: Path,
-        dep_manifest: Mapping[str, str],
         sandbox_factory: Callable[[], Sandbox],
         candidates: CandidateStore,
         confirmed: ConfirmedStore,
@@ -44,7 +42,6 @@ class Checker:
         timeout_s: int,
     ) -> None:
         self._target_root = target_root
-        self._dep_manifest = dep_manifest
         self._sandbox_factory = sandbox_factory
         self._candidates = candidates
         self._confirmed = confirmed
@@ -56,8 +53,6 @@ class Checker:
             raise ValueError("checker only accepts persisted candidates")
         if probe.path is None:
             raise ValueError("probe must be written to disk before verification")
-        # Hard constraint: dependency hash lock. Drift refuses execution outright.
-        verify_tree(self._target_root, self._dep_manifest)
         # Fresh, clean sandbox instance per verification — never reuse state.
         sandbox = self._sandbox_factory()
         result = sandbox.run(

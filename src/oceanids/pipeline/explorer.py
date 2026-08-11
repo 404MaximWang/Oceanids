@@ -9,7 +9,7 @@ no legal output) is NOT marked — the file is explored again on the next run.
 Files already marked explored are skipped before dispatch (resume).
 """
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -120,20 +120,33 @@ def explore(
     pending = [task for task in tasks if not explored.is_explored(task.path)]
     skipped = len(tasks) - len(pending)
     new = dup = failures = 0
+    done = 0
+    total = len(pending)
     with ThreadPoolExecutor(max_workers=pool_size, thread_name_prefix="explorer") as pool:
         futures = {
             pool.submit(_explore_one, root, task, llm, store, max_retries): task
             for task in pending
         }
-        for future, task in futures.items():
+        for future in as_completed(futures):
+            task = futures[future]
             added, repeated, failed = future.result()
             new += added
             dup += repeated
             failures += int(failed)
-            if not failed:
+            done += 1
+            if failed:
+                print(
+                    f"[Oceanids] [{done}/{total}] {task.path}: "
+                    "exploration failed, kept for next run"
+                )
+            else:
                 # Success burned the file's single chance — even when the answer
                 # was an empty issues array.
                 explored.mark_explored(task.path)
+                print(
+                    f"[Oceanids] [{done}/{total}] {task.path}: "
+                    f"+{added} candidates ({repeated} dup)"
+                )
     return ExplorationStats(
         files=len(pending),
         files_skipped=skipped,

@@ -1,14 +1,12 @@
-"""Checker: true/false-positive routing, evidence dedup, dependency hash lock."""
+"""Checker: true/false-positive routing, evidence dedup, location-stable evidence keys."""
 
+import shutil
 import sys
 from pathlib import Path
-
-import pytest
 
 from oceanids.db import CandidateStore, ConfirmedStore, Database
 from oceanids.models import CandidateIssue, CandidateStatus, Probe
 from oceanids.pipeline.checker import Checker
-from oceanids.sandbox.base import DependencyDriftError, hash_tree
 from oceanids.sandbox.local import LocalSandbox
 
 
@@ -54,7 +52,6 @@ def _checker(
 ) -> Checker:
     return Checker(
         target,
-        hash_tree(target),
         lambda: LocalSandbox(target),
         candidates,
         confirmed,
@@ -116,11 +113,26 @@ def test_evidence_dedup_across_candidates(tmp_path: Path) -> None:
     assert "#1" in verdict2.reason  # dup verdict names the representing bug
 
 
-def test_dependency_drift_refuses_execution(tmp_path: Path) -> None:
-    candidates, confirmed, target = _setup(tmp_path)
-    candidate = _candidate(candidates)
-    probe = _probe(tmp_path, candidate.id or 0, crashing=True)
-    checker = _checker(candidates, confirmed, target)
-    (target / "victim.py").write_text("# drifted\n", encoding="utf-8")
-    with pytest.raises(DependencyDriftError):
-        checker.verify(candidate, probe)
+def test_evidence_key_independent_of_snapshot_location(tmp_path: Path) -> None:
+    """The frozen copy's temp path must never leak into the evidence key.
+
+    The same bug proven from two different snapshot locations (what two runs
+    with different frozen dirs look like) must dedup to ONE confirmed bug —
+    otherwise resume would re-confirm already-known bugs on every run.
+    """
+    candidates, confirmed, target_a = _setup(tmp_path)
+    target_b = tmp_path / "other_snapshot"
+    shutil.copytree(target_a, target_b)
+    first = _candidate(candidates, function="crash")
+    second = _candidate(candidates, function="crash-alias")
+
+    verdict_a = _checker(candidates, confirmed, target_a).verify(
+        first, _probe(tmp_path, first.id or 0, crashing=True)
+    )
+    verdict_b = _checker(candidates, confirmed, target_b).verify(
+        second, _probe(tmp_path, second.id or 0, crashing=True)
+    )
+
+    assert verdict_a.confirmed_id is not None
+    assert verdict_b.confirmed_id is None  # same evidence key despite different location
+    assert confirmed.count() == 1

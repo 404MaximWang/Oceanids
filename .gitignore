@@ -3,8 +3,3 @@
 /.mypy_cache
 /.pytest_cache
 /.ruff_cache
-
-# Oceanids runtime artifacts (paths.* config defaults)
-/oceanids.db
-/probes/
-/report.md

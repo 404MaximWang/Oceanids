@@ -1,6 +1,7 @@
 """Probe auditor gate: ok / invalid-then-rewrite-ok / rewrite-budget-exhausted paths."""
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -12,6 +13,13 @@ from oceanids.models import CandidateStatus
 from oceanids.orchestrator import run_pipeline
 
 FIXTURE = Path(__file__).parent / "fixtures" / "vuln_app"
+
+
+def _target(tmp_path: Path) -> Path:
+    """A private copy of the fixture — freezing it never touches this repo's git."""
+    target = tmp_path / "target"
+    shutil.copytree(FIXTURE, target)
+    return target
 
 
 def _settings(tmp_path: Path, *, probe_audit: bool = True, probe_retries: int = 2) -> Settings:
@@ -87,7 +95,7 @@ def test_audit_ok_path_confirms(tmp_path: Path) -> None:
     explorer, probe = _explorer_and_probe()
     auditor = _ScriptedAuditor(['{"verdict": "ok", "feedback": ""}'])
     clients = StageClients(explorer=explorer, probe=probe, auditor=auditor)
-    summary = run_pipeline(FIXTURE, _settings(tmp_path), clients)
+    summary = run_pipeline(_target(tmp_path), _settings(tmp_path), clients)
 
     assert summary.confirmed_new == 1
     assert summary.audit_rejected == 0
@@ -103,7 +111,7 @@ def test_audit_invalid_then_rewrite_ok(tmp_path: Path) -> None:
         ]
     )
     clients = StageClients(explorer=explorer, probe=probe, auditor=auditor)
-    summary = run_pipeline(FIXTURE, _settings(tmp_path), clients)
+    summary = run_pipeline(_target(tmp_path), _settings(tmp_path), clients)
 
     assert summary.confirmed_new == 1
     assert summary.audit_rejected == 0
@@ -122,7 +130,7 @@ def test_audit_rewrite_budget_exhausted_rejects_candidate(tmp_path: Path) -> Non
     )
     clients = StageClients(explorer=explorer, probe=probe, auditor=auditor)
     settings = _settings(tmp_path, probe_retries=2)
-    summary = run_pipeline(FIXTURE, settings, clients)
+    summary = run_pipeline(_target(tmp_path), settings, clients)
 
     assert summary.confirmed_new == 0
     assert summary.audit_rejected == 1
@@ -138,7 +146,7 @@ def test_audit_disabled_skips_auditor(tmp_path: Path) -> None:
     explorer, probe = _explorer_and_probe()
     auditor = _ScriptedAuditor([])  # would answer ok anyway; must not be called
     clients = StageClients(explorer=explorer, probe=probe, auditor=auditor)
-    summary = run_pipeline(FIXTURE, _settings(tmp_path, probe_audit=False), clients)
+    summary = run_pipeline(_target(tmp_path), _settings(tmp_path, probe_audit=False), clients)
 
     assert summary.confirmed_new == 1
     assert auditor.calls == []
@@ -149,7 +157,7 @@ def test_audit_garbage_contract_leaves_candidate_pending(tmp_path: Path) -> None
     auditor = MockLLM(routes=[], default="not json")  # never a valid audit contract
     clients = StageClients(explorer=explorer, probe=probe, auditor=auditor)
     settings = _settings(tmp_path)
-    summary = run_pipeline(FIXTURE, settings, clients)
+    summary = run_pipeline(_target(tmp_path), settings, clients)
 
     assert summary.confirmed_new == 0
     assert summary.audit_rejected == 0  # not rejected — just not actionable this run

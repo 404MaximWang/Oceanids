@@ -1,14 +1,20 @@
-"""End-to-end: orchestrator over tests/fixtures/vuln_app with MockLLM + local sandbox.
+"""End-to-end: orchestrator over a copy of tests/fixtures/vuln_app (MockLLM + local sandbox).
 
-No network, no containers. Covers the full loop (single exploration pass →
-probe → audit gate → check → report), the "once" semantics (explored files are
-skipped on resume; failed files are re-explored), and the idempotency
-guarantee: running twice must not grow confirmed_bugs.
+No network, no containers. Covers the full loop (freeze → single exploration
+pass → probe → audit gate → check → report), the "once" semantics (explored
+files are skipped on resume; failed files are re-explored), and the idempotency
+guarantee: running twice must not grow confirmed_bugs. The fixture is always
+copied into tmp_path first: run_pipeline freezes the target, and the fixture
+itself lives inside the Oceanids git repo — freezing it would snapshot (and
+write objects into) the wrong repository.
 """
 
 import json
+import shutil
 import sys
 from pathlib import Path
+
+import pytest
 
 from oceanids.config import PathsCfg, RunCfg, Settings
 from oceanids.db import CandidateStore, ConfirmedStore, Database, ExploredFilesStore
@@ -20,6 +26,13 @@ from oceanids.orchestrator import run_pipeline
 FIXTURE = Path(__file__).parent / "fixtures" / "vuln_app"
 
 _AUDIT_OK = '{"verdict": "ok", "feedback": ""}'
+
+
+def _target(tmp_path: Path) -> Path:
+    """A private copy of the fixture — freezing it never touches this repo's git."""
+    target = tmp_path / "target"
+    shutil.copytree(FIXTURE, target)
+    return target
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -69,7 +82,7 @@ def _llm() -> MockLLM:
 
 def test_e2e_full_pipeline(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    summary = run_pipeline(FIXTURE, settings, _llm())
+    summary = run_pipeline(_target(tmp_path), settings, _llm())
 
     assert summary.tasks == 2  # calculator.py + textutil.py
     assert summary.files_skipped == 0
@@ -100,10 +113,11 @@ def test_e2e_full_pipeline(tmp_path: Path) -> None:
 
 def test_e2e_idempotent_across_runs(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    run_pipeline(FIXTURE, settings, _llm())
+    target = _target(tmp_path)
+    run_pipeline(target, settings, _llm())
     count_first = ConfirmedStore(Database(Path(settings.paths.db))).count()
 
-    summary2 = run_pipeline(FIXTURE, settings, _llm())
+    summary2 = run_pipeline(target, settings, _llm())
     count_second = ConfirmedStore(Database(Path(settings.paths.db))).count()
 
     assert count_first == 1
@@ -113,8 +127,9 @@ def test_e2e_idempotent_across_runs(tmp_path: Path) -> None:
 
 def test_e2e_explored_files_are_skipped_on_rerun(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
+    target = _target(tmp_path)
     llm = _llm()
-    run_pipeline(FIXTURE, settings, llm)
+    run_pipeline(target, settings, llm)
     calls_first = len(llm.calls)
 
     db = Database(Path(settings.paths.db))
@@ -122,7 +137,7 @@ def test_e2e_explored_files_are_skipped_on_rerun(tmp_path: Path) -> None:
     assert explored.is_explored("calculator.py")
     assert explored.is_explored("textutil.py")
 
-    summary2 = run_pipeline(FIXTURE, settings, llm)
+    summary2 = run_pipeline(target, settings, llm)
     # Both files burned their chance in run 1: nothing is dispatched again.
     assert summary2.tasks == 0
     assert summary2.files_skipped == 2
@@ -131,8 +146,9 @@ def test_e2e_explored_files_are_skipped_on_rerun(tmp_path: Path) -> None:
 
 def test_e2e_failed_exploration_is_retried_next_run(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
+    target = _target(tmp_path)
     broken = MockLLM(routes=[], default="not json")  # every explore call fails
-    summary1 = run_pipeline(FIXTURE, settings, broken)
+    summary1 = run_pipeline(target, settings, broken)
 
     assert summary1.candidates_new == 0
     db = Database(Path(settings.paths.db))
@@ -141,7 +157,7 @@ def test_e2e_failed_exploration_is_retried_next_run(tmp_path: Path) -> None:
     assert not explored.is_explored("calculator.py")
     assert not explored.is_explored("textutil.py")
 
-    summary2 = run_pipeline(FIXTURE, settings, _llm())
+    summary2 = run_pipeline(target, settings, _llm())
     # The failed files are explored again — and now yield the candidate.
     assert summary2.tasks == 2
     assert summary2.files_skipped == 0
@@ -160,7 +176,7 @@ def test_e2e_stage_clients_route_each_stage(tmp_path: Path) -> None:
     probe_llm = MockLLM(routes=[("PROBE for candidate", full._routes[1][1])], default="[]")
     auditor_llm = MockLLM(routes=[("AUDIT probe", full._routes[0][1])], default="[]")
     clients = StageClients(explorer=explorer_llm, probe=probe_llm, auditor=auditor_llm)
-    summary = run_pipeline(FIXTURE, settings, clients)
+    summary = run_pipeline(_target(tmp_path), settings, clients)
 
     assert summary.confirmed_new == 1
     assert any("EXPLORE" in call for call in explorer_llm.calls)
@@ -170,3 +186,34 @@ def test_e2e_stage_clients_route_each_stage(tmp_path: Path) -> None:
     assert not any("PROBE" in call or "AUDIT" in call for call in explorer_llm.calls)
     assert not any("EXPLORE" in call or "AUDIT" in call for call in probe_llm.calls)
     assert not any("EXPLORE" in call or "PROBE for" in call for call in auditor_llm.calls)
+
+
+def test_e2e_artifacts_follow_target_and_resume_from_any_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default relative paths land under <target>/.oceanids/ (artifacts follow the
+    target), the pipeline runs on a frozen copy so its own artifact writes can
+    never interfere, and a re-run from a different CWD resumes via the same
+    target."""
+    target = _target(tmp_path)
+    settings = Settings(
+        run=RunCfg(pool_size=2, sandbox="local", llm="mock", timeout_s=30),
+        paths=PathsCfg(),  # defaults: relative names -> <target>/.oceanids/
+    )
+    summary = run_pipeline(target, settings, _llm())
+
+    artifacts = target / ".oceanids"
+    assert (artifacts / "oceanids.db").is_file()
+    assert any((artifacts / "probes").iterdir())
+    assert summary.report_path == (artifacts / "report.md").resolve()
+    assert summary.report_path.is_file()
+    assert summary.confirmed_new == 1
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # CWD must not matter for artifact resolution
+    summary2 = run_pipeline(target, settings, _llm())
+    assert summary2.tasks == 0
+    assert summary2.files_skipped == 2
+    assert summary2.confirmed_new == 0
+    assert ConfirmedStore(Database(artifacts / "oceanids.db")).count() == 1
