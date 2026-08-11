@@ -41,16 +41,19 @@ def generate_probe(
     *,
     max_retries: int,
     rewrite_feedback: str = "",
+    overview: str = "",
 ) -> Probe | None:
     """Generate one probe for one candidate; None when the LLM never complies.
 
     ``rewrite_feedback`` carries the probe auditor's rejection reason on a
-    rewrite attempt, so the generator can fix the flagged problem.
+    rewrite attempt, so the generator can fix the flagged problem. ``overview``
+    is the agent-written project overview injected into the prompt.
     """
     if candidate.id is None:
         raise ValueError("probe generation only accepts persisted candidates")
     prompt = (
         f"PROBE for candidate in file {candidate.file}, function {candidate.function}.\n"
+        f"Project overview (overview.md):\n{overview}\n\n"
         f"Bug type: {format_cwe(candidate.cwe_id)}.\n"
         f"Bug category: {candidate.bug_category}.\n"
         f"Description: {candidate.description}\n"

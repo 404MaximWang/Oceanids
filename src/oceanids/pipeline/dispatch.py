@@ -1,4 +1,4 @@
-"""Phase 2: split the overview into per-file exploration tasks.
+"""Phase 2: split the function index into per-file exploration tasks.
 
 Test files are excluded using the cross-language heuristics ported (and typed)
 from FM-Agent's file_utils.py: known test directory names plus test-file naming
@@ -8,7 +8,7 @@ patterns.
 import re
 from dataclasses import dataclass
 
-from oceanids.pipeline.overview import FunctionSpan, Overview
+from oceanids.pipeline.function_index import FunctionIndex, FunctionSpan
 
 TEST_DIR_NAMES: frozenset[str] = frozenset(
     {
@@ -58,10 +58,10 @@ class Task:
     functions: tuple[FunctionSpan, ...] | None
 
 
-def dispatch(overview: Overview) -> list[Task]:
-    """Turn the overview into exploration tasks, excluding test files."""
+def dispatch(index: FunctionIndex) -> list[Task]:
+    """Turn the function index into exploration tasks, excluding test files."""
     return [
         Task(path=file.path, language=file.language, functions=file.functions)
-        for file in overview.files
+        for file in index.files
         if not is_test_file(file.path)
     ]

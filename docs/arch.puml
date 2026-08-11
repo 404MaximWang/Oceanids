@@ -3,39 +3,65 @@
 skinparam backgroundColor #FEFEFE
 skinparam componentStyle rectangle
 
+' 组件类型配色：Agent(LLM 驱动) vs 机械结构(确定性程序)
+skinparam component {
+    BackgroundColor<<agent>> #FFE8CC
+    BorderColor<<agent>> #CC7A00
+    BackgroundColor<<mech>> #E3F2FD
+    BorderColor<<mech>> #1565C0
+}
+
 title Oceanids
 
-database "SQLite" as DB {
+legend right
+  |= 类型 |= 含义 |
+  | <back:#FFE8CC>«agent»</back> | LLM 驱动，有判断力 |
+  | <back:#E3F2FD>«mech»</back> | 机械结构：确定性程序，无 LLM |
+endlegend
+
+database "SQLite" as DB <<mech>> {
     rectangle "表1: candidate_issues\n(子代理原始输出 | 状态)" as T1
     rectangle "表2: confirmed_bugs\n(经 Probe 证实的真 Bug)" as T2
 }
 
 package "发现者" {
-    [Overview 生成器] as Overview
-    [任务分发器] as Dispatch
+    [函数索引生成器\nAST/启发式解析] as FuncIndex <<mech>>
+    [任务分发器\n规则切分] as Dispatch <<mech>>
+    [Overview 文档代理\n写 overview.md] as OvGen <<agent>>
 }
 
+artifact "overview.md\n(.oceanids/)" as OvMd
+
 package "子代理池" {
-    [探索代理 1] as SA1
-    [探索代理 2] as SA2
-    [探索代理 3] as SA3
+    [探索代理 1] as SA1 <<agent>>
+    [探索代理 2] as SA2 <<agent>>
+    [探索代理 3] as SA3 <<agent>>
 }
 
 package "验证者" {
-    [Probe 生成器] as ProbeGen
-    [Probe 审计员\n静态审查\n(不执行)] as Audit
-    [沙箱执行引擎\n编译|运行|比对] as Sandbox
-    [独立 Checker\n干净环境重跑\n只信自跑结果] as Checker
+    [Probe 生成器] as ProbeGen <<agent>>
+    [Probe 审计员\n静态审查\n(不执行)] as Audit <<agent>>
+    [沙箱执行引擎\n编译|运行|比对] as Sandbox <<mech>>
+    [独立 Checker\n干净环境重跑\n只信自跑结果] as Checker <<mech>>
 }
 
 ' Phase 0: 冻结快照（私有 index / copytree 降级）
-[冻结快照\n私有 index 快照\ncopytree 降级] as Freeze
+[冻结快照\n私有 index 快照\ncopytree 降级] as Freeze <<mech>>
 [目标代码库] --> Freeze
-Freeze --> Overview
-Overview --> Dispatch
+Freeze --> FuncIndex
+FuncIndex --> Dispatch
+FuncIndex --> OvGen
+OvGen --> OvMd : 缺失→生成\n重试一次,仍无→报错退出
 Dispatch --> SA1
 Dispatch --> SA2
 Dispatch --> SA3
+
+' overview.md 注入后续所有 agent 的上下文
+OvMd ..> SA1 : 注入上下文
+OvMd ..> SA2 : 注入上下文
+OvMd ..> SA3 : 注入上下文
+OvMd ..> ProbeGen : 注入上下文
+OvMd ..> Audit : 注入上下文
 
 note right of Dispatch
   单函数单 agent:

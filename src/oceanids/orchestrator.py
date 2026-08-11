@@ -2,9 +2,11 @@
 
 Flow (docs/arch.puml): freeze the target (private-index git worktree snapshot,
 copytree fallback for non-git dirs — drift is impossible by construction) →
-overview/dispatch on the frozen copy → ONE exploration pass ("one file, one
-agent, once" — only a successful round burns the file's chance; already
-explored files are skipped on resume) → per pending candidate: probe generation
+function index / dispatch on the frozen copy → agent-written overview.md (one
+retry, then abort — injected into every later agent's context) → ONE
+exploration pass ("one file, one agent, once" — only a successful round burns
+the file's chance; already explored files are skipped on resume) → per pending
+candidate: probe generation
 → probe auditor gate (invalid probes go back for a bounded rewrite; budget
 exhausted → candidate rejected, feedback kept) → checker verification →
 markdown report.
@@ -25,9 +27,9 @@ from oceanids.db import CandidateStore, ConfirmedStore, Database, ExploredFilesS
 from oceanids.freeze import ARTIFACTS_DIRNAME, frozen_target
 from oceanids.llm.base import LLMClient, StageClients
 from oceanids.models import CandidateIssue, CandidateStatus, Probe, VerdictKind
-from oceanids.pipeline import dispatch, explorer, probe_audit, probe_gen
+from oceanids.pipeline import dispatch, explorer, overview, probe_audit, probe_gen
 from oceanids.pipeline.checker import Checker
-from oceanids.pipeline.overview import build_overview
+from oceanids.pipeline.function_index import build_function_index
 from oceanids.report import write_report
 from oceanids.sandbox.base import Sandbox
 from oceanids.sandbox.bwrap import BwrapSandbox
@@ -88,6 +90,7 @@ def _verify_chain(
     candidates: CandidateStore,
     checker: Checker,
     probes_dir: Path,
+    overview: str,
 ) -> str:
     """One candidate's full chain: generate → audit gate → sandbox verify.
 
@@ -95,13 +98,14 @@ def _verify_chain(
     "confirmed", "rejected", or "duplicate" (proven but already represented).
     """
     probe = probe_gen.generate_probe(
-        candidate, clients.probe, probes_dir, max_retries=settings.run.probe_retries
+        candidate, clients.probe, probes_dir,
+        max_retries=settings.run.probe_retries, overview=overview,
     )
     if probe is None:
         return "pending"  # generation failed; candidate stays pending for the next run
     if settings.run.probe_audit:
         outcome, probe = _audit_gate(
-            candidate, probe, frozen, settings, clients, candidates, probes_dir
+            candidate, probe, frozen, settings, clients, candidates, probes_dir, overview
         )
         if outcome == "rejected":
             return "audit_rejected"
@@ -124,6 +128,7 @@ def run_verify_stage(
     candidates: CandidateStore,
     confirmed: ConfirmedStore,
     probes_dir: Path,
+    overview: str = "",
 ) -> VerifyStats:
     """Verify candidates concurrently (generate → audit → sandbox per candidate).
 
@@ -160,6 +165,7 @@ def run_verify_stage(
                 candidates=candidates,
                 checker=checker,
                 probes_dir=probes_dir,
+                overview=overview,
             ): candidate
             for candidate in pending
         }
@@ -197,6 +203,7 @@ def _audit_gate(
     clients: StageClients,
     candidates: CandidateStore,
     probes_dir: Path,
+    overview: str,
 ) -> tuple[str, Probe | None]:
     """The auditor loop; returns (outcome, probe).
 
@@ -211,7 +218,7 @@ def _audit_gate(
     current: Probe | None = probe
     while current is not None:
         verdict = probe_audit.audit_probe(
-            candidate, current, target, clients.auditor, max_retries=1
+            candidate, current, target, clients.auditor, max_retries=1, overview=overview
         )
         if verdict is None:
             return ("pending", None)
@@ -236,6 +243,7 @@ def _audit_gate(
             candidate, clients.probe, probes_dir,
             max_retries=settings.run.probe_retries,
             rewrite_feedback=verdict.feedback,
+            overview=overview,
         )
     return ("pending", None)
 
@@ -264,11 +272,18 @@ def run_pipeline(target: Path, settings: Settings, llm: LLMClient | StageClients
     # by construction (no hash lock needed).
     with frozen_target(target) as frozen:
         print(f"[Oceanids] Frozen snapshot: {frozen}")
+        index = build_function_index(frozen)
+        # The agent-written project overview: reused when it already exists,
+        # generated otherwise (one retry, then OverviewError aborts the run).
+        overview_path = resolve_artifact_path(target, overview.OVERVIEW_FILENAME)
+        overview_text = overview.load_or_generate(index, clients.explorer, overview_path)
+        print(f"[Oceanids] Project overview: {overview_path}")
         # One exploration pass: explore() itself skips already-explored files and
         # only marks files whose agent round succeeded.
         stats = explorer.explore(
-            frozen, dispatch.dispatch(build_overview(frozen)), clients.explorer, candidates,
+            frozen, dispatch.dispatch(index), clients.explorer, candidates,
             explored, pool_size=settings.run.pool_size, max_retries=1,
+            overview=overview_text,
         )
         print(
             f"[Oceanids] Explore done: {stats.files} file(s) explored, "
@@ -285,6 +300,7 @@ def run_pipeline(target: Path, settings: Settings, llm: LLMClient | StageClients
             candidates=candidates,
             confirmed=confirmed,
             probes_dir=probes_dir,
+            overview=overview_text,
         )
 
     report_path = write_report(confirmed, resolve_artifact_path(target, settings.paths.report))

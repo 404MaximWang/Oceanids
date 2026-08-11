@@ -70,6 +70,7 @@ def _explore_one(
     llm: LLMClient,
     store: CandidateStore,
     max_retries: int,
+    overview: str,
 ) -> tuple[int, int, bool]:
     """Analyze one file; returns (new, dup, llm_failed)."""
     source = (root / task.path).read_text(encoding="utf-8", errors="replace")
@@ -80,6 +81,7 @@ def _explore_one(
     )
     prompt = (
         f"EXPLORE file {task.path} (language: {task.language}).\n"
+        f"Project overview (overview.md):\n{overview}\n\n"
         f"Functions: {functions}.\n"
         "Report likely bugs as a JSON array of objects with keys function, cwe_id, "
         "bug_category, description, trigger. Report [] when nothing looks wrong.\n"
@@ -111,11 +113,13 @@ def explore(
     *,
     pool_size: int,
     max_retries: int = 1,
+    overview: str = "",
 ) -> ExplorationStats:
     """Run the explorer pool once over the not-yet-explored tasks.
 
     Already-explored files are skipped (resume); a file is marked explored only
     when its agent round succeeded — failures stay re-explorable next run.
+    ``overview`` is the agent-written project overview injected into every prompt.
     """
     pending = [task for task in tasks if not explored.is_explored(task.path)]
     skipped = len(tasks) - len(pending)
@@ -124,7 +128,7 @@ def explore(
     total = len(pending)
     with ThreadPoolExecutor(max_workers=pool_size, thread_name_prefix="explorer") as pool:
         futures = {
-            pool.submit(_explore_one, root, task, llm, store, max_retries): task
+            pool.submit(_explore_one, root, task, llm, store, max_retries, overview): task
             for task in pending
         }
         for future in as_completed(futures):

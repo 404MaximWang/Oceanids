@@ -1,19 +1,61 @@
-"""Overview tree walk: dot directories (incl. the .oceanids artifacts dir) are pruned."""
+"""overview.md: reuse existing / generate on missing / one retry / then abort."""
 
 from pathlib import Path
 
-from oceanids.pipeline.overview import build_overview
+import pytest
+
+from oceanids.llm.mock import MockLLM
+from oceanids.pipeline.function_index import FileIndex, FunctionIndex
+from oceanids.pipeline.overview import OverviewError, load_or_generate
 
 
-def test_overview_skips_dot_directories(tmp_path: Path) -> None:
-    (tmp_path / "app.py").write_text("def f() -> None:\n    pass\n", encoding="utf-8")
-    artifacts = tmp_path / ".oceanids" / "probes"
-    artifacts.mkdir(parents=True)
-    (artifacts / "probe_leftover.py").write_text("def g() -> None:\n    pass\n", encoding="utf-8")
-    git = tmp_path / ".git"
-    git.mkdir()
-    (git / "hook.py").write_text("def h() -> None:\n    pass\n", encoding="utf-8")
+def _index() -> FunctionIndex:
+    return FunctionIndex(
+        root=Path("."),
+        files=(FileIndex(path="app.py", language="python", line_count=10, functions=()),),
+    )
 
-    overview = build_overview(tmp_path)
-    # The artifacts dir and VCS metadata are never treated as target code.
-    assert [file.path for file in overview.files] == ["app.py"]
+
+def test_existing_overview_is_reused(tmp_path: Path) -> None:
+    path = tmp_path / "overview.md"
+    path.write_text("# existing overview\n", encoding="utf-8")
+    llm = MockLLM(routes=[], default="generated")
+
+    text = load_or_generate(_index(), llm, path)
+
+    assert text == "# existing overview\n"
+    assert llm.calls == []  # no regeneration when the file is already there
+
+
+def test_missing_overview_is_generated_and_written(tmp_path: Path) -> None:
+    path = tmp_path / "overview.md"
+    llm = MockLLM(routes=[], default="# generated overview\n")
+
+    text = load_or_generate(_index(), llm, path)
+
+    assert text == "# generated overview\n"
+    assert path.read_text(encoding="utf-8") == text
+    assert len(llm.calls) == 1
+
+
+def test_empty_generation_is_retried_exactly_once(tmp_path: Path) -> None:
+    path = tmp_path / "overview.md"
+    llm = MockLLM(routes=[], default="")
+    responses = iter(["", "# retry worked\n"])
+    llm.complete = lambda prompt: (llm.calls.append(prompt), next(responses))[1]
+
+    text = load_or_generate(_index(), llm, path)
+
+    assert text == "# retry worked\n"
+    assert len(llm.calls) == 2  # first try + the single retry
+
+
+def test_still_missing_after_retry_aborts(tmp_path: Path) -> None:
+    path = tmp_path / "overview.md"
+    llm = MockLLM(routes=[], default="")
+
+    with pytest.raises(OverviewError):
+        load_or_generate(_index(), llm, path)
+
+    assert len(llm.calls) == 2  # burned both attempts, then gave up
+    assert not path.exists()

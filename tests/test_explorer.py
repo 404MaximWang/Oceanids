@@ -6,7 +6,7 @@ from oceanids.db import CandidateStore, Database, ExploredFilesStore
 from oceanids.llm.mock import MockLLM
 from oceanids.pipeline.dispatch import dispatch
 from oceanids.pipeline.explorer import explore
-from oceanids.pipeline.overview import build_overview
+from oceanids.pipeline.function_index import build_function_index
 
 
 def _target(tmp_path: Path) -> Path:
@@ -42,13 +42,13 @@ def _llm() -> MockLLM:
 
 def test_dispatch_excludes_test_files(tmp_path: Path) -> None:
     target = _target(tmp_path)
-    tasks = dispatch(build_overview(target))
+    tasks = dispatch(build_function_index(target))
     assert [task.path for task in tasks] == ["alpha.py", "beta.py"]
 
 
 def test_explorer_inserts_and_marks_explored(tmp_path: Path) -> None:
     target = _target(tmp_path)
-    tasks = dispatch(build_overview(target))
+    tasks = dispatch(build_function_index(target))
     store, explored = _stores(tmp_path)
 
     stats = explore(target, tasks, _llm(), store, explored, pool_size=2, max_retries=0)
@@ -68,7 +68,7 @@ def test_explorer_inserts_and_marks_explored(tmp_path: Path) -> None:
 
 def test_explorer_skips_already_explored_files(tmp_path: Path) -> None:
     target = _target(tmp_path)
-    tasks = dispatch(build_overview(target))
+    tasks = dispatch(build_function_index(target))
     store, explored = _stores(tmp_path)
     llm = _llm()
     explore(target, tasks, llm, store, explored, pool_size=2, max_retries=0)
@@ -83,7 +83,7 @@ def test_explorer_skips_already_explored_files(tmp_path: Path) -> None:
 
 def test_explorer_rerun_with_lost_state_dedups(tmp_path: Path) -> None:
     target = _target(tmp_path)
-    tasks = dispatch(build_overview(target))
+    tasks = dispatch(build_function_index(target))
     store, explored = _stores(tmp_path)
     explore(target, tasks, _llm(), store, explored, pool_size=2, max_retries=0)
 
@@ -97,7 +97,7 @@ def test_explorer_rerun_with_lost_state_dedups(tmp_path: Path) -> None:
 
 def test_explorer_failure_does_not_burn_the_chance(tmp_path: Path) -> None:
     target = _target(tmp_path)
-    tasks = dispatch(build_overview(target))
+    tasks = dispatch(build_function_index(target))
     store, explored = _stores(tmp_path)
     llm = MockLLM(routes=[], default="not json at all")
     stats = explore(target, tasks, llm, store, explored, pool_size=2, max_retries=1)
@@ -114,7 +114,7 @@ def test_explorer_failure_does_not_burn_the_chance(tmp_path: Path) -> None:
 
 def test_explorer_rejects_malformed_issues(tmp_path: Path) -> None:
     target = _target(tmp_path)
-    tasks = dispatch(build_overview(target))
+    tasks = dispatch(build_function_index(target))
     store, explored = _stores(tmp_path)
     llm = MockLLM(routes=[], default='[{"function": "f", "bug_category": "x"}]')
     stats = explore(target, tasks, llm, store, explored, pool_size=2, max_retries=0)
@@ -124,7 +124,7 @@ def test_explorer_rejects_malformed_issues(tmp_path: Path) -> None:
 
 def test_explorer_rejects_cwe_id_outside_subset(tmp_path: Path) -> None:
     target = _target(tmp_path)
-    tasks = dispatch(build_overview(target))
+    tasks = dispatch(build_function_index(target))
     store, explored = _stores(tmp_path)
     issue = (
         '[{"function": "f", "cwe_id": 9999, "bug_category": "x",'

@@ -60,11 +60,13 @@ def audit_probe(
     llm: LLMClient,
     *,
     max_retries: int = 3,
+    overview: str = "",
 ) -> AuditVerdict | None:
     """Statically audit one probe against its candidate and the target source.
 
     Returns None when the auditor LLM never produces a valid contract answer —
-    the caller then leaves the candidate pending for a later run.
+    the caller then leaves the candidate pending for a later run. ``overview``
+    is the agent-written project overview injected into the prompt.
     """
     try:
         source = (target_root / candidate.file).read_text(encoding="utf-8", errors="replace")
@@ -72,6 +74,7 @@ def audit_probe(
         source = "<target source unavailable>"
     prompt = (
         f"AUDIT probe for candidate in file {candidate.file}, function {candidate.function}.\n"
+        f"Project overview (overview.md):\n{overview}\n\n"
         f"Bug type: {format_cwe(candidate.cwe_id)}.\n"
         f"Bug category: {candidate.bug_category}.\n"
         f"Description: {candidate.description}\n"
