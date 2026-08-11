@@ -1,6 +1,7 @@
 """Command line entry point: oceanids run <target>."""
 
 import argparse
+import sys
 from pathlib import Path
 
 from oceanids.config import Settings, load_settings
@@ -9,6 +10,7 @@ from oceanids.llm.base import LLMClient, StageClients
 from oceanids.llm.mock import MockLLM
 from oceanids.llm.pi_cli import PiCLILLM
 from oceanids.orchestrator import run_pipeline
+from oceanids.tmux import launch_in_tmux
 
 _LLM_CHOICES = ["mock", "api", "pi"]
 
@@ -29,6 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--auditor-llm", choices=_LLM_CHOICES, default=None,
                      help="backend for the probe auditor only")
     run.add_argument("--pool-size", type=int, default=None, help="explorer pool size")
+    run.add_argument("--verify-pool-size", type=int, default=None,
+                     help="verification pool size (probe gen → audit → sandbox)")
+    run.add_argument("--tmux", action="store_true",
+                     help="run detached in tmux, logging to ./.oceanids/oceanids.log")
     return parser
 
 
@@ -73,6 +79,8 @@ def build_stage_clients(
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "run":
+        if args.tmux:
+            return launch_in_tmux(list(argv) if argv is not None else sys.argv[1:])
         settings = load_settings()
         # CLI flags override the layered config.
         if args.db is not None:
@@ -81,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
             settings.run.sandbox = args.sandbox
         if args.pool_size is not None:
             settings.run.pool_size = args.pool_size
+        if args.verify_pool_size is not None:
+            settings.run.verify_pool_size = args.verify_pool_size
         clients = build_stage_clients(
             settings,
             unified=args.llm,
@@ -94,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
             f"candidates(+{summary.candidates_new}/dup {summary.candidates_dup}) "
             f"probes={summary.probes} audit_rejected={summary.audit_rejected} "
             f"confirmed(+{summary.confirmed_new}) rejected={summary.rejected} "
-            f"report={summary.report_path}"
+            f"verify_failures={summary.verify_failures} report={summary.report_path}"
         )
         return 0
     return 2
