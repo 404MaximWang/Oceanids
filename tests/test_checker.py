@@ -7,6 +7,7 @@ from pathlib import Path
 from oceanids.db import CandidateStore, ConfirmedStore, Database
 from oceanids.models import CandidateIssue, CandidateStatus, Probe
 from oceanids.pipeline.checker import Checker
+from oceanids.sandbox.base import PROBE_REACHED_MARKER, PROBE_SETUP_MARKER
 from oceanids.sandbox.local import LocalSandbox
 
 
@@ -38,7 +39,19 @@ def _candidate(candidates: CandidateStore, function: str = "crash") -> Candidate
 
 
 def _probe(tmp_path: Path, candidate_id: int, crashing: bool) -> Probe:
-    script = "import victim\nvictim.crash()\n" if crashing else "print('all good')\n"
+    if crashing:
+        script = (
+            "import victim\n"
+            f"print('{PROBE_SETUP_MARKER}')\n"
+            f"print('{PROBE_REACHED_MARKER}')\n"
+            "victim.crash()\n"
+        )
+    else:
+        script = (
+            f"print('{PROBE_SETUP_MARKER}')\n"
+            f"print('{PROBE_REACHED_MARKER}')\n"
+            "print('all good')\n"
+        )
     path = tmp_path / "probes" / f"probe_{candidate_id}"
     path.parent.mkdir(exist_ok=True)
     path.write_text(script, encoding="utf-8")
@@ -86,6 +99,58 @@ def test_false_positive_rejects_candidate(tmp_path: Path) -> None:
     assert verdict.confirmed_id is None
     stored = candidates.get(candidate.id or 0)
     assert stored is not None and stored.status is CandidateStatus.REJECTED
+    assert confirmed.count() == 0
+
+
+def test_setup_failure_leaves_candidate_pending(tmp_path: Path) -> None:
+    """A probe crashing on import (broken dependency) proves NOTHING — the
+    candidate must stay pending, not be confirmed on a bare non-zero exit."""
+    candidates, confirmed, target = _setup(tmp_path)
+    candidate = _candidate(candidates)
+    script = "import totally_missing_dep\n"  # ImportError before any marker
+    path = tmp_path / "probes" / f"probe_{candidate.id or 0}"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(script, encoding="utf-8")
+    probe = Probe(
+        candidate_id=candidate.id or 0,
+        interpreter=(sys.executable,),
+        script=script,
+        path=path,
+    )
+    verdict = _checker(candidates, confirmed, target).verify(candidate, probe)
+
+    assert verdict.kind.value == "setup_failure"
+    assert verdict.confirmed_id is None
+    stored = candidates.get(candidate.id or 0)
+    assert stored is not None and stored.status is CandidateStatus.PENDING
+    assert confirmed.count() == 0
+
+
+def test_unreachable_without_reached_marker(tmp_path: Path) -> None:
+    """Environment intact but the trigger never provably reached the target:
+    UNREACHABLE, and the candidate is untouched (the chain rewrites the probe)."""
+    candidates, confirmed, target = _setup(tmp_path)
+    candidate = _candidate(candidates)
+    script = (
+        f"print('{PROBE_SETUP_MARKER}')\n"
+        "import victim\n"
+        "victim.crash()\n"  # crashes, but no reached marker
+    )
+    path = tmp_path / "probes" / f"probe_{candidate.id or 0}"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(script, encoding="utf-8")
+    probe = Probe(
+        candidate_id=candidate.id or 0,
+        interpreter=(sys.executable,),
+        script=script,
+        path=path,
+    )
+    verdict = _checker(candidates, confirmed, target).verify(candidate, probe)
+
+    assert verdict.kind.value == "unreachable"
+    assert verdict.confirmed_id is None
+    stored = candidates.get(candidate.id or 0)
+    assert stored is not None and stored.status is CandidateStatus.PENDING
     assert confirmed.count() == 0
 
 

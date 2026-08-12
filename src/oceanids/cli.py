@@ -104,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
             f"candidates(+{summary.candidates_new}/dup {summary.candidates_dup}) "
             f"probes={summary.probes} audit_rejected={summary.audit_rejected} "
             f"confirmed(+{summary.confirmed_new}) rejected={summary.rejected} "
+            f"setup_failures={summary.setup_failures} "
             f"verify_failures={summary.verify_failures} report={summary.report_path}"
         )
         return 0

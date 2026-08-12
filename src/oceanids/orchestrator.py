@@ -31,7 +31,7 @@ from oceanids.pipeline import dispatch, explorer, overview, probe_audit, probe_g
 from oceanids.pipeline.checker import Checker
 from oceanids.pipeline.function_index import build_function_index
 from oceanids.report import write_report
-from oceanids.sandbox.base import Sandbox
+from oceanids.sandbox.base import PROBE_REACHED_MARKER, Sandbox
 from oceanids.sandbox.bwrap import BwrapSandbox
 from oceanids.sandbox.local import LocalSandbox
 from oceanids.sandbox.qemu import QemuSandbox
@@ -55,6 +55,7 @@ class RunSummary:
     audit_rejected: int
     confirmed_new: int
     rejected: int
+    setup_failures: int
     verify_failures: int
     report_path: Path
 
@@ -67,6 +68,7 @@ class VerifyStats:
     audit_rejected: int
     confirmed_new: int
     rejected: int
+    setup_failures: int
     failures: int
 
 
@@ -95,7 +97,9 @@ def _verify_chain(
     """One candidate's full chain: generate → audit gate → sandbox verify.
 
     Returns a tally category: "pending" (kept for a later run), "audit_rejected",
-    "confirmed", "rejected", or "duplicate" (proven but already represented).
+    "confirmed", "rejected", "duplicate" (proven but already represented), or
+    "setup_failure" (probe never proved its environment intact — candidate
+    stays pending; counted separately from LLM/generation failures).
     """
     probe = probe_gen.generate_probe(
         candidate, clients.probe, probes_dir,
@@ -112,6 +116,41 @@ def _verify_chain(
         if probe is None:
             return "pending"  # auditor/generator unavailable; stays pending
     verdict = checker.verify(candidate, probe)
+    # The probe ran but never proved the trigger reached the targeted path:
+    # bounded rewrite loop (same budget as probe generation), then rejected.
+    rewrites_left = settings.run.probe_retries
+    while verdict.kind is VerdictKind.UNREACHABLE:
+        if rewrites_left == 0:
+            candidates.update_status(candidate.id, CandidateStatus.REJECTED)
+            print(
+                f"oceanids: candidate #{candidate.id} ({candidate.function}) rejected: "
+                f"probe could not reach the target path after "
+                f"{settings.run.probe_retries} rewrites",
+                file=sys.stderr,
+            )
+            return "rejected"
+        rewrites_left -= 1
+        print(
+            f"oceanids: probe for {candidate.function} did not reach the target "
+            f"path; rewriting ({rewrites_left} left)",
+            file=sys.stderr,
+        )
+        probe = probe_gen.generate_probe(
+            candidate, clients.probe, probes_dir,
+            max_retries=settings.run.probe_retries,
+            rewrite_feedback=(
+                "Your previous probe ran but never printed the "
+                f"{PROBE_REACHED_MARKER} marker — the trigger input did not "
+                "provably enter the targeted function/path. Instrument or wrap "
+                "the target so that reaching the path prints the marker."
+            ),
+            overview=overview,
+        )
+        if probe is None:
+            return "pending"  # rewrite generation failed; stays pending
+        verdict = checker.verify(candidate, probe)
+    if verdict.kind is VerdictKind.SETUP_FAILURE:
+        return "setup_failure"  # environment not provably intact; stays pending
     if verdict.confirmed_id is not None:
         return "confirmed"
     if verdict.kind is VerdictKind.FALSE_POSITIVE:
@@ -145,7 +184,14 @@ def run_verify_stage(
         confirmed,
         timeout_s=settings.run.timeout_s,
     )
-    tallies = {"confirmed": 0, "rejected": 0, "duplicate": 0, "audit_rejected": 0, "pending": 0}
+    tallies = {
+        "confirmed": 0,
+        "rejected": 0,
+        "duplicate": 0,
+        "audit_rejected": 0,
+        "pending": 0,
+        "setup_failure": 0,
+    }
     failures = 0
     done = 0
     total = len(pending)
@@ -191,6 +237,7 @@ def run_verify_stage(
         audit_rejected=tallies["audit_rejected"],
         confirmed_new=tallies["confirmed"],
         rejected=tallies["rejected"],
+        setup_failures=tallies["setup_failure"],
         failures=failures,
     )
 
@@ -314,6 +361,7 @@ def run_pipeline(target: Path, settings: Settings, llm: LLMClient | StageClients
         audit_rejected=verify.audit_rejected,
         confirmed_new=verify.confirmed_new,
         rejected=verify.rejected,
+        setup_failures=verify.setup_failures,
         verify_failures=verify.failures,
         report_path=report_path,
     )

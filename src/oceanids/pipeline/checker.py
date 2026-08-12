@@ -1,10 +1,16 @@
 """Phase 3.5 + 4: the independent checker.
 
 For every probe the checker builds a brand-new clean sandbox instance, re-runs
-the probe itself and trusts only its own evidence. True positives land in
+the probe itself and trusts only its own evidence. A confirmation requires ALL
+of: the probe printed its setup marker (dependencies loaded intact), its
+reached marker (the trigger input entered the targeted path), and the oracle
+fired (non-zero exit / timeout / sanitizer hit). True positives land in
 confirmed_bugs (evidence-key dedup, arch.puml 法二) and flip the candidate to
-confirmed; false positives flip it to rejected. The target cannot drift
-mid-run: the pipeline handed the checker a frozen snapshot (oceanids.freeze).
+confirmed; a clean run with both markers flips it to rejected. Runs without
+the setup or reached markers prove nothing: the candidate is left untouched
+(SETUP_FAILURE) or sent back for a probe rewrite (UNREACHABLE). The target
+cannot drift mid-run: the pipeline handed the checker a frozen snapshot
+(oceanids.freeze).
 """
 
 from collections.abc import Callable
@@ -23,6 +29,7 @@ from oceanids.models import (
 from oceanids.sandbox.base import (
     ExecutionResult,
     Sandbox,
+    detect_probe_markers,
     detect_sanitizer_hits,
     extract_top_frames,
     make_evidence_key,
@@ -59,6 +66,25 @@ class Checker:
             [*probe.interpreter, str(probe.path.resolve())], timeout_s=self._timeout_s
         )
         evidence = self._collect_evidence(result, probe.path)
+        if not evidence.setup_ok:
+            # The probe never proved its environment was intact (missing setup
+            # marker) — a crash-on-import exits non-zero too, so nothing here
+            # is evidence about the candidate. Leave it pending.
+            return Verdict(
+                candidate_id=candidate.id,
+                kind=VerdictKind.SETUP_FAILURE,
+                reason="probe did not print its setup marker; dependencies may be broken",
+                evidence=evidence,
+            )
+        if not evidence.reached:
+            # Environment intact, but the trigger never provably entered the
+            # targeted path — the probe goes back for a bounded rewrite.
+            return Verdict(
+                candidate_id=candidate.id,
+                kind=VerdictKind.UNREACHABLE,
+                reason="probe did not print its reached marker; trigger may not hit the target path",
+                evidence=evidence,
+            )
         if evidence.oracle_fired:
             bug = ConfirmedBug(
                 candidate_id=candidate.id,
@@ -96,6 +122,7 @@ class Checker:
         normalized = result.stderr.replace(str(probe_path.resolve()), "$PROBE")
         output = result.stdout + "\n" + normalized
         hits = detect_sanitizer_hits(output)
+        setup_ok, reached = detect_probe_markers(output)
         frames = extract_top_frames(normalized, workdir=result.workdir)
         oracle_fired = result.exit_code != 0 or result.timed_out or bool(hits)
         return Evidence(
@@ -107,4 +134,6 @@ class Checker:
             top_frames=frames,
             oracle_fired=oracle_fired,
             evidence_key=make_evidence_key(frames, normalized, workdir=result.workdir),
+            setup_ok=setup_ok,
+            reached=reached,
         )

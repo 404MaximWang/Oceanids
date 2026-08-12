@@ -11,6 +11,7 @@ from oceanids.llm.base import StageClients
 from oceanids.llm.mock import MockLLM
 from oceanids.models import CandidateStatus
 from oceanids.orchestrator import run_pipeline
+from oceanids.sandbox.base import PROBE_REACHED_MARKER, PROBE_SETUP_MARKER
 
 FIXTURE = Path(__file__).parent / "fixtures" / "vuln_app"
 
@@ -67,7 +68,12 @@ def _explorer_and_probe() -> tuple[MockLLM, MockLLM]:
                 json.dumps(
                     {
                         "interpreter": [sys.executable],
-                        "script": "import calculator\ncalculator.average([])\n",
+                        "script": (
+                            "import calculator\n"
+                            f"print('{PROBE_SETUP_MARKER}')\n"
+                            f"print('{PROBE_REACHED_MARKER}')\n"
+                            "calculator.average([])\n"
+                        ),
                     }
                 ),
             )

@@ -13,6 +13,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+# Structured markers a probe must print to stdout. Both are hard prerequisites
+# for a confirmation: the checker never trusts a bare non-zero exit, because a
+# probe that crashes on import (broken dependency) exits non-zero too.
+PROBE_SETUP_MARKER = "OCEANIDS_PROBE_SETUP_OK"
+PROBE_REACHED_MARKER = "OCEANIDS_PROBE_REACHED"
+
 # Substrings treated as sanitizer/analyser firings when seen on stdout/stderr.
 SANITIZER_MARKERS: tuple[str, ...] = (
     "AddressSanitizer",
@@ -58,6 +64,15 @@ class Sandbox(Protocol):
 def detect_sanitizer_hits(text: str) -> tuple[str, ...]:
     """Sanitizer markers found in the combined output."""
     return tuple(marker for marker in SANITIZER_MARKERS if marker in text)
+
+
+def detect_probe_markers(text: str) -> tuple[bool, bool]:
+    """Probe contract markers found in the output: (setup_ok, reached).
+
+    ``setup_ok`` proves the probe loaded the target and its dependencies
+    intact; ``reached`` proves the trigger input entered the targeted path.
+    """
+    return (PROBE_SETUP_MARKER in text, PROBE_REACHED_MARKER in text)
 
 
 def extract_top_frames(text: str, *, workdir: str = "") -> tuple[str, ...]:

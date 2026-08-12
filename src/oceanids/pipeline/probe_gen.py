@@ -13,8 +13,10 @@ from oceanids.cwe import format_cwe
 from oceanids.io_utils import atomic_write_text
 from oceanids.llm.base import Json, LLMClient, call_structured
 from oceanids.models import CandidateIssue, Probe
+from oceanids.sandbox.base import PROBE_REACHED_MARKER, PROBE_SETUP_MARKER
 
 _PROBE_SCHEMA = '{"interpreter": ["<command>", ...], "script": "<self-contained source>"}'
+
 
 
 def _validate_probe(data: Json) -> tuple[tuple[str, ...], str]:
@@ -31,6 +33,9 @@ def _validate_probe(data: Json) -> tuple[tuple[str, ...], str]:
         raise ValueError("probe interpreter must be a non-empty array of strings")
     if not isinstance(script, str) or not script.strip():
         raise ValueError("probe script must be a non-empty string")
+    for marker in (PROBE_SETUP_MARKER, PROBE_REACHED_MARKER):
+        if marker not in script:
+            raise ValueError(f"probe script must print the {marker} marker")
     return (tuple(str(part) for part in interpreter), script)
 
 
@@ -60,7 +65,17 @@ def generate_probe(
         f"Trigger: {candidate.trigger}\n"
         "Write a self-contained probe script that deterministically triggers the bug "
         "through the public entry point only, exiting non-zero (or crashing) when the "
-        f"bug fires. Reply with JSON: {_PROBE_SCHEMA}"
+        "bug fires. The probe MUST print two marker lines to stdout or its result is "
+        "discarded regardless of exit code:\n"
+        f"1. {PROBE_SETUP_MARKER} — only AFTER the target module and all its "
+        "dependencies loaded successfully and sanity checks passed (this proves the "
+        "environment is intact; a crash on import must NOT print it);\n"
+        f"2. {PROBE_REACHED_MARKER} — only when the trigger input actually enters "
+        "the targeted function/path (e.g. by wrapping the target function, or by "
+        "observing behaviour unique to that path).\n"
+        "For hang-style bugs, print both markers before handing the trigger to a "
+        "watched child/worker so a timeout still carries them.\n"
+        f"Reply with JSON: {_PROBE_SCHEMA}"
     )
     if rewrite_feedback:
         prompt += (

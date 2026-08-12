@@ -12,13 +12,19 @@ from oceanids.llm.base import LLMClient, StageClients
 from oceanids.llm.mock import MockLLM
 from oceanids.models import CandidateIssue, CandidateStatus
 from oceanids.orchestrator import VerifyStats, run_verify_stage
+from oceanids.sandbox.base import PROBE_REACHED_MARKER, PROBE_SETUP_MARKER
 
 FIXTURE = Path(__file__).parent / "fixtures" / "vuln_app"
 
 _PROBE_JSON = json.dumps(
     {
         "interpreter": [sys.executable],
-        "script": "import calculator\ncalculator.average([])\n",
+        "script": (
+            "import calculator\n"
+            f"print('{PROBE_SETUP_MARKER}')\n"
+            f"print('{PROBE_REACHED_MARKER}')\n"
+            "calculator.average([])\n"
+        ),
     }
 )
 _AUDIT_OK = '{"verdict": "ok", "feedback": ""}'
@@ -96,6 +102,7 @@ def _run(
         candidates=candidates,
         confirmed=confirmed,
         probes_dir=Path(settings.paths.probes_dir),
+        overview="",
     )
 
 

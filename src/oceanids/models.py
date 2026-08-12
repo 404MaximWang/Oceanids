@@ -30,6 +30,12 @@ class VerdictKind(enum.StrEnum):
 
     TRUE_POSITIVE = "true_positive"
     FALSE_POSITIVE = "false_positive"
+    # The probe never proved its environment was intact (no setup marker) —
+    # says nothing about the candidate; it stays pending.
+    SETUP_FAILURE = "setup_failure"
+    # Environment intact but the probe never proved the trigger reached the
+    # targeted path — the probe goes back for a bounded rewrite.
+    UNREACHABLE = "unreachable"
 
 
 @dataclass(frozen=True)
@@ -60,6 +66,7 @@ class Probe:
     path: Path | None = None
 
 
+
 @dataclass(frozen=True)
 class Evidence:
     """Machine-readable oracle data collected from the checker's own sandbox run."""
@@ -72,6 +79,11 @@ class Evidence:
     top_frames: tuple[str, ...]
     oracle_fired: bool
     evidence_key: str
+    # Probe contract markers: the probe proved its dependencies loaded intact
+    # (setup_ok) and that the trigger input reached the targeted path
+    # (reached). Both are required before an oracle firing confirms anything.
+    setup_ok: bool = False
+    reached: bool = False
 
 
 @dataclass(frozen=True)
