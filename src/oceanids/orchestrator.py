@@ -26,7 +26,13 @@ from oceanids.config import Settings
 from oceanids.db import CandidateStore, ConfirmedStore, Database, ExploredFilesStore
 from oceanids.freeze import ARTIFACTS_DIRNAME, frozen_target
 from oceanids.llm.base import LLMClient, StageClients
-from oceanids.models import CandidateIssue, CandidateStatus, Probe, VerdictKind
+from oceanids.models import (
+    CandidateIssue,
+    CandidateStatus,
+    Probe,
+    ProbeRefusal,
+    VerdictKind,
+)
 from oceanids.pipeline import dispatch, explorer, overview, probe_audit, probe_gen
 from oceanids.pipeline.checker import Checker
 from oceanids.pipeline.function_index import build_function_index
@@ -53,9 +59,11 @@ class RunSummary:
     candidates_dup: int
     probes: int
     audit_rejected: int
+    generator_refused: int
     confirmed_new: int
     rejected: int
     setup_failures: int
+    inconclusive: int
     verify_failures: int
     report_path: Path
 
@@ -66,9 +74,11 @@ class VerifyStats:
 
     probes: int
     audit_rejected: int
+    generator_refused: int
     confirmed_new: int
     rejected: int
     setup_failures: int
+    inconclusive: int
     failures: int
 
 
@@ -97,9 +107,11 @@ def _verify_chain(
     """One candidate's full chain: generate → audit gate → sandbox verify.
 
     Returns a tally category: "pending" (kept for a later run), "audit_rejected",
-    "confirmed", "rejected", "duplicate" (proven but already represented), or
-    "setup_failure" (probe never proved its environment intact — candidate
-    stays pending; counted separately from LLM/generation failures).
+    "confirmed", "rejected", "duplicate" (proven but already represented),
+    "generator_refused" (the generator refused with a reason — candidate
+    rejected, reason persisted), "setup_failure" (probe never proved its
+    environment intact — attempt counted, candidate stays pending), or
+    "inconclusive" (attempt budget exhausted without evidence either way).
     """
     probe = probe_gen.generate_probe(
         candidate, clients.probe, probes_dir,
@@ -107,6 +119,16 @@ def _verify_chain(
     )
     if probe is None:
         return "pending"  # generation failed; candidate stays pending for the next run
+    if isinstance(probe, ProbeRefusal):
+        # The generator's structured refusal: an auditable opinion, persisted
+        # as the reject reason — never a silent skip.
+        candidates.update_status(candidate.id, CandidateStatus.REJECTED, probe.reason)
+        print(
+            f"oceanids: candidate #{candidate.id} ({candidate.function}) rejected: "
+            f"generator refused — {probe.reason}",
+            file=sys.stderr,
+        )
+        return "generator_refused"
     if settings.run.probe_audit:
         outcome, probe = _audit_gate(
             candidate, probe, frozen, settings, clients, candidates, probes_dir, overview
@@ -121,7 +143,12 @@ def _verify_chain(
     rewrites_left = settings.run.probe_retries
     while verdict.kind is VerdictKind.UNREACHABLE:
         if rewrites_left == 0:
-            candidates.update_status(candidate.id, CandidateStatus.REJECTED)
+            candidates.update_status(
+                candidate.id,
+                CandidateStatus.REJECTED,
+                f"probe could not reach the target path after "
+                f"{settings.run.probe_retries} rewrites",
+            )
             print(
                 f"oceanids: candidate #{candidate.id} ({candidate.function}) rejected: "
                 f"probe could not reach the target path after "
@@ -148,9 +175,34 @@ def _verify_chain(
         )
         if probe is None:
             return "pending"  # rewrite generation failed; stays pending
+        if isinstance(probe, ProbeRefusal):
+            candidates.update_status(candidate.id, CandidateStatus.REJECTED, probe.reason)
+            print(
+                f"oceanids: candidate #{candidate.id} ({candidate.function}) rejected: "
+                f"generator refused — {probe.reason}",
+                file=sys.stderr,
+            )
+            return "generator_refused"
         verdict = checker.verify(candidate, probe)
     if verdict.kind is VerdictKind.SETUP_FAILURE:
-        return "setup_failure"  # environment not provably intact; stays pending
+        # Environment not provably intact (incl. bare timeouts without
+        # markers): count the evidence-less attempt (FM-Agent's error class);
+        # the budget decides pending-vs-inconclusive.
+        attempts = candidates.increment_attempts(candidate.id)
+        if attempts >= settings.run.verify_attempts:
+            candidates.update_status(
+                candidate.id,
+                CandidateStatus.INCONCLUSIVE,
+                f"no evidence after {attempts} verification attempt(s); "
+                "last run did not prove its environment intact",
+            )
+            print(
+                f"oceanids: candidate #{candidate.id} ({candidate.function}) "
+                f"inconclusive after {attempts} attempt(s)",
+                file=sys.stderr,
+            )
+            return "inconclusive"
+        return "setup_failure"  # budget remains; stays pending for the next run
     if verdict.confirmed_id is not None:
         return "confirmed"
     if verdict.kind is VerdictKind.FALSE_POSITIVE:
@@ -189,8 +241,10 @@ def run_verify_stage(
         "rejected": 0,
         "duplicate": 0,
         "audit_rejected": 0,
+        "generator_refused": 0,
         "pending": 0,
         "setup_failure": 0,
+        "inconclusive": 0,
     }
     failures = 0
     done = 0
@@ -235,9 +289,11 @@ def run_verify_stage(
     return VerifyStats(
         probes=tallies["confirmed"] + tallies["rejected"] + tallies["duplicate"],
         audit_rejected=tallies["audit_rejected"],
+        generator_refused=tallies["generator_refused"],
         confirmed_new=tallies["confirmed"],
         rejected=tallies["rejected"],
         setup_failures=tallies["setup_failure"],
+        inconclusive=tallies["inconclusive"],
         failures=failures,
     )
 
@@ -272,7 +328,9 @@ def _audit_gate(
         if verdict.ok:
             return ("ok", current)
         if rewrites_left == 0:
-            candidates.update_status(candidate.id, CandidateStatus.REJECTED)
+            candidates.update_status(
+                candidate.id, CandidateStatus.REJECTED, verdict.feedback
+            )
             print(
                 f"oceanids: candidate #{candidate.id} ({candidate.function}) rejected by "
                 f"probe auditor after {settings.run.probe_retries} rewrites: "
@@ -359,9 +417,11 @@ def run_pipeline(target: Path, settings: Settings, llm: LLMClient | StageClients
         candidates_dup=stats.candidates_dup,
         probes=verify.probes,
         audit_rejected=verify.audit_rejected,
+        generator_refused=verify.generator_refused,
         confirmed_new=verify.confirmed_new,
         rejected=verify.rejected,
         setup_failures=verify.setup_failures,
+        inconclusive=verify.inconclusive,
         verify_failures=verify.failures,
         report_path=report_path,
     )

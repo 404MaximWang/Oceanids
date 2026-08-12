@@ -17,12 +17,18 @@ class CandidateStatus(enum.StrEnum):
     already represented in confirmed_bugs by another candidate — distinct
     from ``confirmed`` (first proof) so duplicate-attribution density stays
     measurable, and from ``pending`` so resumes never re-probe it.
+    ``inconclusive`` is the terminal state for candidates whose verification
+    never produced evidence either way within the attempt budget (broken
+    environment, bare timeouts) — it asserts nothing about the candidate and
+    is never retried automatically; reset it to ``pending`` manually once the
+    environment is fixed.
     """
 
     PENDING = "pending"
     REJECTED = "rejected"
     CONFIRMED = "confirmed"
     DUPLICATE = "duplicate"
+    INCONCLUSIVE = "inconclusive"
 
 
 class VerdictKind(enum.StrEnum):
@@ -43,7 +49,10 @@ class CandidateIssue:
     """One raw finding reported by an explorer agent (table candidate_issues).
 
     Dedup key is (function, cwe_id); bug_category stays a free-text label from
-    the exploration stage and plays no role in dedup.
+    the exploration stage and plays no role in dedup. ``reject_reason`` records
+    why a rejected candidate was rejected (auditor budget exhausted, generator
+    refusal, or a clean checker run). ``verify_attempts`` counts checker runs
+    that produced no evidence either way (setup failure, bare timeout).
     """
 
     file: str
@@ -54,6 +63,8 @@ class CandidateIssue:
     trigger: str
     status: CandidateStatus = CandidateStatus.PENDING
     id: int | None = None
+    reject_reason: str | None = None
+    verify_attempts: int = 0
 
 
 @dataclass(frozen=True)
@@ -65,6 +76,18 @@ class Probe:
     script: str
     path: Path | None = None
 
+
+@dataclass(frozen=True)
+class ProbeRefusal:
+    """The generator's structured refusal to probe a candidate.
+
+    A refusal is an OPINION with a reason (e.g. the trigger cannot reach the
+    target through the public entry point), not proof — it is persisted as the
+    candidate's reject_reason so refusals stay auditable after the fact.
+    """
+
+    candidate_id: int
+    reason: str
 
 
 @dataclass(frozen=True)

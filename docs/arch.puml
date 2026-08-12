@@ -84,6 +84,7 @@ end note
 ' Phase 3: 验证者直接订阅表1
 T1 --> ProbeGen : SELECT pending
 ProbeGen --> Audit : Probe\n(输入/预期输出)
+ProbeGen --> T1 : 结构化拒绝(refuse+reason)\n→ UPDATE(status='rejected',\nreject_reason=理由)
 
 ' Phase 3.4: 审计门（打回重写，耗尽则拒）
 Audit --> ProbeGen : invalid → 打回重写\n(上限 probe_retries)
@@ -102,9 +103,19 @@ end note
 ' Phase 3.5: 生成/执行/判定三权分离
 Sandbox --> Checker : 执行证据
 
+note right of Checker
+  确认前置条件(缺一不可):
+  1. SETUP 标记 → 依赖完整
+  2. REACHED 标记 → 输入可达
+  3. oracle 触发(exit!=0/超时/sanitizer)
+  缺 SETUP → 计一次 verify_attempts
+  缺 REACHED → 打回重写,耗尽则拒
+end note
+
 ' Phase 4: 验证结果分流
 Checker --> T2 : 真阳性 → INSERT 表2\n法二: 证据去重\n(top-3帧/违反点)
 Checker --> T1 : 假阳性 → UPDATE\n(status='rejected')
+Checker --> T1 : 无证据运行耗尽 verify_attempts\n→ UPDATE(status='inconclusive')\n(不判真不判假,可手动重置)
 
 T2 --> [Bug 报告] : 全部经 Probe 证实
 

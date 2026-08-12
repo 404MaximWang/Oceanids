@@ -103,7 +103,11 @@ class Checker:
                 evidence=evidence,
                 confirmed_id=new_id,
             )
-        self._candidates.update_status(candidate.id, CandidateStatus.REJECTED)
+        self._candidates.update_status(
+            candidate.id,
+            CandidateStatus.REJECTED,
+            "probe ran clean in the checker's own re-run",
+        )
         return Verdict(
             candidate_id=candidate.id,
             kind=VerdictKind.FALSE_POSITIVE,

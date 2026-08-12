@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS candidate_issues (
     description TEXT NOT NULL,
     trigger TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'rejected', 'confirmed', 'duplicate')),
+        CHECK (status IN ('pending', 'rejected', 'confirmed', 'duplicate', 'inconclusive')),
+    reject_reason TEXT,
+    verify_attempts INTEGER NOT NULL DEFAULT 0,
     UNIQUE (function, cwe_id)
 );
 CREATE TABLE IF NOT EXISTS confirmed_bugs (
@@ -91,6 +93,8 @@ def _row_to_candidate(row: sqlite3.Row) -> CandidateIssue:
         description=str(row["description"]),
         trigger=str(row["trigger"]),
         status=CandidateStatus(str(row["status"])),
+        reject_reason=None if row["reject_reason"] is None else str(row["reject_reason"]),
+        verify_attempts=int(row["verify_attempts"]),
     )
 
 
@@ -145,11 +149,33 @@ class CandidateStore:
         ).fetchall()
         return [_row_to_candidate(row) for row in rows]
 
-    def update_status(self, issue_id: int, status: CandidateStatus) -> None:
+    def update_status(
+        self, issue_id: int, status: CandidateStatus, reason: str | None = None
+    ) -> None:
+        """Set the candidate's status; ``reason`` is persisted as reject_reason."""
+        if reason is None:
+            self._db.conn.execute(
+                "UPDATE candidate_issues SET status = ? WHERE id = ?",
+                (status.value, issue_id),
+            )
+        else:
+            self._db.conn.execute(
+                "UPDATE candidate_issues SET status = ?, reject_reason = ? WHERE id = ?",
+                (status.value, reason, issue_id),
+            )
+        self._db.conn.commit()
+
+    def increment_attempts(self, issue_id: int) -> int:
+        """Count one evidence-less verification run; returns the new total."""
         self._db.conn.execute(
-            "UPDATE candidate_issues SET status = ? WHERE id = ?", (status.value, issue_id)
+            "UPDATE candidate_issues SET verify_attempts = verify_attempts + 1 WHERE id = ?",
+            (issue_id,),
         )
         self._db.conn.commit()
+        row = self._db.conn.execute(
+            "SELECT verify_attempts AS n FROM candidate_issues WHERE id = ?", (issue_id,)
+        ).fetchone()
+        return int(row["n"])
 
     def count(self) -> int:
         row = self._db.conn.execute("SELECT COUNT(*) AS n FROM candidate_issues").fetchone()
@@ -243,7 +269,8 @@ class ConfirmedStore:
         rows = self._db.conn.execute(
             """
             SELECT b.*, c.id AS c_id, c.file, c.function, c.cwe_id AS c_cwe_id,
-                   c.bug_category, c.description, c.trigger, c.status
+                   c.bug_category, c.description, c.trigger, c.status,
+                   c.reject_reason, c.verify_attempts
             FROM confirmed_bugs b JOIN candidate_issues c ON c.id = b.candidate_id
             ORDER BY b.id
             """
@@ -259,6 +286,8 @@ class ConfirmedStore:
                 description=str(row["description"]),
                 trigger=str(row["trigger"]),
                 status=CandidateStatus(str(row["status"])),
+                reject_reason=None if row["reject_reason"] is None else str(row["reject_reason"]),
+                verify_attempts=int(row["verify_attempts"]),
             )
             pairs.append((_row_to_bug(row), candidate))
         return pairs

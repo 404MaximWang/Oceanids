@@ -103,8 +103,10 @@ def main(argv: list[str] | None = None) -> int:
             f"tasks={summary.tasks} skipped={summary.files_skipped} "
             f"candidates(+{summary.candidates_new}/dup {summary.candidates_dup}) "
             f"probes={summary.probes} audit_rejected={summary.audit_rejected} "
+            f"generator_refused={summary.generator_refused} "
             f"confirmed(+{summary.confirmed_new}) rejected={summary.rejected} "
             f"setup_failures={summary.setup_failures} "
+            f"inconclusive={summary.inconclusive} "
             f"verify_failures={summary.verify_failures} report={summary.report_path}"
         )
         return 0

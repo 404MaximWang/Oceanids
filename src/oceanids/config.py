@@ -91,6 +91,9 @@ class RunCfg(_Section):
     auditor_llm: BackendName | None = None
     timeout_s: int = Field(default=30, gt=0)
     probe_retries: int = Field(default=2, ge=0)
+    # Budget of evidence-less verification runs (setup failure / bare timeout)
+    # before a candidate goes terminal-inconclusive (FM-Agent's error class).
+    verify_attempts: int = Field(default=3, ge=1)
     # Probe auditor gate (between probe_gen and checker): on by default.
     probe_audit: bool = True
 
