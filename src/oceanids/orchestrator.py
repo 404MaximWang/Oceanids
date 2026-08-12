@@ -384,9 +384,13 @@ def run_pipeline(target: Path, settings: Settings, llm: LLMClient | StageClients
         overview_text = overview.load_or_generate(index, clients.explorer, overview_path)
         print(f"[Oceanids] Project overview: {overview_path}")
         # One exploration pass: explore() itself skips already-explored files and
-        # only marks files whose agent round succeeded.
+        # only marks files whose agent round succeeded. --submodule narrows the
+        # dispatched tasks only; the index and overview stay project-global.
+        if settings.run.submodule:
+            print(f"[Oceanids] Scoping exploration to submodule: {settings.run.submodule}")
         stats = explorer.explore(
-            frozen, dispatch.dispatch(index), clients.explorer, candidates,
+            frozen, dispatch.dispatch(index, settings.run.submodule), clients.explorer,
+            candidates,
             explored, pool_size=settings.run.pool_size, max_retries=1,
             overview=overview_text,
         )

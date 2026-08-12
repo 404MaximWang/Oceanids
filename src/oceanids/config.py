@@ -96,6 +96,9 @@ class RunCfg(_Section):
     verify_attempts: int = Field(default=3, ge=1)
     # Probe auditor gate (between probe_gen and checker): on by default.
     probe_audit: bool = True
+    # --submodule: scope exploration to one target-relative directory; the
+    # function index and overview still cover the whole project. None = all.
+    submodule: str | None = None
 
 
 class PathsCfg(_Section):

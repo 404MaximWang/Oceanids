@@ -58,10 +58,17 @@ class Task:
     functions: tuple[FunctionSpan, ...] | None
 
 
-def dispatch(index: FunctionIndex) -> list[Task]:
-    """Turn the function index into exploration tasks, excluding test files."""
+def dispatch(index: FunctionIndex, scope: str | None = None) -> list[Task]:
+    """Turn the function index into exploration tasks, excluding test files.
+
+    ``scope`` is a target-relative POSIX directory (the --submodule option);
+    when set, only files under it become tasks. The index itself always
+    covers the whole tree so the project overview stays global.
+    """
+    prefix = None if scope is None else scope.rstrip("/") + "/"
     return [
         Task(path=file.path, language=file.language, functions=file.functions)
         for file in index.files
-        if not is_test_file(file.path)
+        if (prefix is None or file.path.startswith(prefix))
+        and not is_test_file(file.path)
     ]

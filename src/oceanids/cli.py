@@ -35,7 +35,27 @@ def build_parser() -> argparse.ArgumentParser:
                      help="verification pool size (probe gen → audit → sandbox)")
     run.add_argument("--tmux", action="store_true",
                      help="run detached in tmux, logging to ./.oceanids/oceanids.log")
+    run.add_argument("--submodule", default=None, metavar="DIR",
+                     help="scope exploration to one target-relative directory; "
+                          "the index and overview still cover the whole project")
     return parser
+
+
+def _resolve_submodule(target: Path, submodule: str) -> str | None:
+    """Validate --submodule: an existing directory inside the target tree.
+
+    Returns the normalized target-relative POSIX path, or None when it names
+    the target root itself (same as no scoping). Rejects escapes and misses.
+    """
+    root = target.resolve()
+    resolved = (root / submodule).resolve()
+    if resolved != root and root not in resolved.parents:
+        raise SystemExit(f"oceanids: --submodule {submodule!r} escapes the target tree")
+    if not resolved.is_dir():
+        raise SystemExit(f"oceanids: --submodule {submodule!r} is not a directory under {root}")
+    if resolved == root:
+        return None
+    return resolved.relative_to(root).as_posix()
 
 
 def build_client(backend: str, settings: Settings) -> LLMClient:
@@ -91,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
             settings.run.pool_size = args.pool_size
         if args.verify_pool_size is not None:
             settings.run.verify_pool_size = args.verify_pool_size
+        if args.submodule is not None:
+            settings.run.submodule = _resolve_submodule(args.target, args.submodule)
         clients = build_stage_clients(
             settings,
             unified=args.llm,
