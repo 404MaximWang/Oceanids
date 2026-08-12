@@ -87,6 +87,11 @@ def test_generator_refusal_rejects_with_reason(tmp_path: Path) -> None:
     assert candidate.status is CandidateStatus.REJECTED
     assert candidate.reject_reason == "no public entry point reaches average()"
     assert ConfirmedStore(Database(Path(settings.paths.db))).count() == 0
+    # The refusal stays visible in the report appendix, reason included.
+    report = summary.report_path.read_text(encoding="utf-8")
+    assert "Appendix: unresolved candidates" in report
+    assert "Rejected (with reason)" in report
+    assert "no public entry point reaches average()" in report
 
 
 _CRASH_ON_IMPORT_PROBE = json.dumps(
@@ -122,6 +127,10 @@ def test_evidence_less_attempts_end_inconclusive(tmp_path: Path) -> None:
     assert candidate.verify_attempts == 2
     assert candidate.reject_reason is not None and "no evidence" in candidate.reject_reason
     assert ConfirmedStore(Database(Path(settings.paths.db))).count() == 0
+    # Inconclusive candidates surface in the report appendix with their tally.
+    report = second.report_path.read_text(encoding="utf-8")
+    assert "Inconclusive (no conclusive evidence within the attempt budget)" in report
+    assert "2 attempt(s)" in report
 
     # Terminal: a third run must not retry an inconclusive candidate.
     third = run_pipeline(target, settings, clients)

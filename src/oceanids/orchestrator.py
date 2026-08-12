@@ -408,7 +408,9 @@ def run_pipeline(target: Path, settings: Settings, llm: LLMClient | StageClients
             overview=overview_text,
         )
 
-    report_path = write_report(confirmed, resolve_artifact_path(target, settings.paths.report))
+    report_path = write_report(
+        confirmed, candidates, resolve_artifact_path(target, settings.paths.report)
+    )
     print(f"[Oceanids] Report written: {report_path}")
     return RunSummary(
         tasks=stats.files,
