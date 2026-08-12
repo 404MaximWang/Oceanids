@@ -14,6 +14,7 @@ import shutil
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from oceanids.llm.base import LLMBackendError
 
@@ -33,13 +34,26 @@ class PiCommand:
 
 
 class PiCLILLM:
-    """LLMClient that pipes each prompt to the pi CLI's stdin and returns stdout."""
+    """LLMClient that pipes each prompt to the pi CLI's stdin and returns stdout.
 
-    def __init__(self, command: Sequence[str] = ("pi", "-p"), *, timeout_s: int = 600) -> None:
+    ``cwd`` pins the subprocess working directory. pi is an agentic CLI that
+    reads/writes around its cwd; leaving it unset lets it inherit wherever the
+    oceanids process happened to be launched from (resume-from-any-CWD makes
+    that nondeterministic), so the CLI always pins it to the target tree.
+    """
+
+    def __init__(
+        self,
+        command: Sequence[str] = ("pi", "-p"),
+        *,
+        timeout_s: int = 600,
+        cwd: Path | None = None,
+    ) -> None:
         if not command:
             raise LLMBackendError("backend 'pi' requires a non-empty command template")
         self._command = tuple(command)
         self._timeout_s = timeout_s
+        self._cwd = cwd
 
     def build_command(self, prompt: str) -> PiCommand:
         """The command for one prompt: template argv unchanged, prompt via stdin."""
@@ -63,6 +77,7 @@ class PiCLILLM:
                 encoding="utf-8",
                 errors="replace",
                 timeout=self._timeout_s,
+                cwd=self._cwd,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:

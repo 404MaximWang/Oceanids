@@ -3,7 +3,10 @@
 The pipeline keeps its default interactive foreground behavior; --tmux opts
 into a detached tmux session that replays the same command (via
 ``python -m oceanids``, flag stripped) with stdout/stderr redirected to
-./.oceanids/oceanids.log. Missing tmux is a hard error, not a fallback.
+<target>/.oceanids/oceanids.log — the same artifacts dir every other path
+anchors at (orchestrator.resolve_artifact_path), so the log location never
+depends on the launch CWD or the tmux session's working directory. Missing
+tmux is a hard error, not a fallback.
 """
 
 import os
@@ -13,7 +16,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-LOG_PATH = Path(".oceanids") / "oceanids.log"
+from oceanids.freeze import ARTIFACTS_DIRNAME
+
+LOG_FILENAME = "oceanids.log"
+
+
+def log_path(target: str) -> Path:
+    """The run log, anchored at <target>/.oceanids/ like every other artifact."""
+    return Path(target).resolve() / ARTIFACTS_DIRNAME / LOG_FILENAME
 
 
 def _session_name(target: str) -> str:
@@ -37,12 +47,13 @@ def launch_in_tmux(argv: list[str]) -> int:
         return 2
     child = [arg for arg in argv if arg != "--tmux"]
     target = child[child.index("run") + 1] if "run" in child else ""
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    log = log_path(target)
+    log.parent.mkdir(parents=True, exist_ok=True)
     inner = shlex.join([sys.executable, "-m", "oceanids", *child])
     session = _session_name(target)
-    shell = f"{inner} > {shlex.quote(str(LOG_PATH))} 2>&1"
+    shell = f"{inner} > {shlex.quote(str(log))} 2>&1"
     subprocess.run(["tmux", "new-session", "-d", "-s", session, shell], check=True)
     print(f"[Oceanids] Detached tmux session: {session}")
-    print(f"[Oceanids] Log: {LOG_PATH.resolve()}  (tail -f to follow)")
+    print(f"[Oceanids] Log: {log}  (tail -f to follow)")
     print(f"[Oceanids] Attach: tmux attach -t {session}")
     return 0

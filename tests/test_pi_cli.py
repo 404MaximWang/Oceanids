@@ -31,6 +31,14 @@ def test_complete_pipes_prompt_and_returns_stdout(tmp_path: Path) -> None:
     assert llm.complete("ping") == "ping"
 
 
+def test_complete_runs_in_pinned_cwd(tmp_path: Path) -> None:
+    workdir = tmp_path / "target"
+    workdir.mkdir()
+    fake = _script(tmp_path, "#!/bin/bash\npwd\n")
+    llm = PiCLILLM([fake], timeout_s=10, cwd=workdir)
+    assert Path(llm.complete("x")).resolve() == workdir.resolve()
+
+
 def test_nonzero_exit_raises_with_output_tail(tmp_path: Path) -> None:
     fake = _script(tmp_path, "#!/bin/bash\nhead -c 9000 /dev/zero | tr '\\0' E\nexit 3\n")
     llm = PiCLILLM([fake], timeout_s=10)

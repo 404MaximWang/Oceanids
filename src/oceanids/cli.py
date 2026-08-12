@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--verify-pool-size", type=int, default=None,
                      help="verification pool size (probe gen → audit → sandbox)")
     run.add_argument("--tmux", action="store_true",
-                     help="run detached in tmux, logging to ./.oceanids/oceanids.log")
+                     help="run detached in tmux, logging to <target>/.oceanids/oceanids.log")
     run.add_argument("--submodule", default=None, metavar="DIR",
                      help="scope exploration to one target-relative directory; "
                           "the index and overview still cover the whole project")
@@ -58,8 +58,12 @@ def _resolve_submodule(target: Path, submodule: str) -> str | None:
     return resolved.relative_to(root).as_posix()
 
 
-def build_client(backend: str, settings: Settings) -> LLMClient:
-    """Instantiate one backend by name; unknown names fail with a readable exit."""
+def build_client(backend: str, settings: Settings, *, cwd: Path | None = None) -> LLMClient:
+    """Instantiate one backend by name; unknown names fail with a readable exit.
+
+    ``cwd`` pins the working directory of subprocess-based backends (pi); it is
+    ignored by in-process backends (mock/api).
+    """
     if backend == "mock":
         # Offline placeholder backend: scripted routes come from tests; a real
         # scripted-replay source plugs in here later.
@@ -67,7 +71,7 @@ def build_client(backend: str, settings: Settings) -> LLMClient:
     if backend == "api":
         return APILLM(settings.llm.api)
     if backend == "pi":
-        return PiCLILLM(settings.llm.pi.command, timeout_s=settings.llm.pi.timeout_s)
+        return PiCLILLM(settings.llm.pi.command, timeout_s=settings.llm.pi.timeout_s, cwd=cwd)
     raise SystemExit(
         f"oceanids: unknown llm backend {backend!r} (expected one of {_LLM_CHOICES})"
     )
@@ -80,19 +84,21 @@ def build_stage_clients(
     explorer: str | None = None,
     probe: str | None = None,
     auditor: str | None = None,
+    cwd: Path | None = None,
 ) -> StageClients:
     """Resolve the fixed per-stage backend mapping and build the clients.
 
     Precedence per stage: stage CLI flag > unified CLI flag > stage config field
     > run.llm config default. No fallback escalation, no heuristic routing.
+    ``cwd`` is forwarded to subprocess-based backends (see build_client).
     """
     explorer_name = explorer or unified or settings.run.explorer_llm or settings.run.llm
     probe_name = probe or unified or settings.run.probe_llm or settings.run.llm
     auditor_name = auditor or unified or settings.run.auditor_llm or settings.run.llm
     return StageClients(
-        explorer=build_client(explorer_name, settings),
-        probe=build_client(probe_name, settings),
-        auditor=build_client(auditor_name, settings),
+        explorer=build_client(explorer_name, settings, cwd=cwd),
+        probe=build_client(probe_name, settings, cwd=cwd),
+        auditor=build_client(auditor_name, settings, cwd=cwd),
     )
 
 
@@ -119,6 +125,9 @@ def main(argv: list[str] | None = None) -> int:
             explorer=args.explorer_llm,
             probe=args.probe_llm,
             auditor=args.auditor_llm,
+            # Pin subprocess backends (pi) to the target tree: without this they
+            # inherit wherever the oceanids process was launched from.
+            cwd=args.target.resolve(),
         )
         summary = run_pipeline(args.target, settings, clients)
         print(
