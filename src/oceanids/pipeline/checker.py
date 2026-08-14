@@ -82,7 +82,8 @@ class Checker:
             return Verdict(
                 candidate_id=candidate.id,
                 kind=VerdictKind.UNREACHABLE,
-                reason="probe did not print its reached marker; trigger may not hit the target path",
+                reason="probe did not print its reached marker; "
+                "trigger may not hit the target path",
                 evidence=evidence,
             )
         if evidence.oracle_fired:
@@ -137,7 +138,11 @@ class Checker:
             sanitizer_hits=hits,
             top_frames=frames,
             oracle_fired=oracle_fired,
-            evidence_key=make_evidence_key(frames, normalized, workdir=result.workdir),
+            # Silent crashes carry no frames/stderr: the probe name (unique per
+            # candidate) keeps such keys from collapsing into one shared hash.
+            evidence_key=make_evidence_key(
+                frames, normalized, workdir=result.workdir, fallback=probe_path.name
+            ),
             setup_ok=setup_ok,
             reached=reached,
         )

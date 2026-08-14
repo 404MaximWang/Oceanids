@@ -110,6 +110,39 @@ def test_bwrap_command_construction(tmp_path: Path) -> None:
     assert command[-1] == "/bin/true"
 
 
+def test_bwrap_binds_absolute_path_args_and_target_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Probe script/interpreter must exist inside the sandbox; target imports need PYTHONPATH."""
+    monkeypatch.setattr(shutil, "which", lambda _name: "/fake/bwrap")
+    probe = tmp_path / "probe_1"
+    probe.write_text("# probe\n", encoding="utf-8")
+    sandbox = BwrapSandbox(tmp_path)
+    command = sandbox.build_command(["python3", str(probe)])
+
+    binds = [command[i + 2] for i, arg in enumerate(command) if arg == "--ro-bind"]
+    assert str(probe) in binds  # the probe file is visible inside at the same path
+    assert "/target" in binds
+    assert "/usr" in binds  # system dirs for the interpreter/runtime
+    assert "PYTHONPATH" in command and "/target" in command
+    assert command[-2:] == ["python3", str(probe)]
+
+
+def test_evidence_key_silent_crash_falls_back_to_identity() -> None:
+    """No frames + empty stderr must not collapse distinct candidates into one key."""
+    key_a = make_evidence_key((), "", fallback="probe_1")
+    key_b = make_evidence_key((), "", fallback="probe_2")
+    assert key_a != key_b
+    assert key_a == make_evidence_key((), "", fallback="probe_1")  # stable per candidate
+
+
+def test_evidence_key_frames_and_stderr_dominate() -> None:
+    assert make_evidence_key(("a.py:1",), "err", fallback="p") == make_evidence_key(
+        ("a.py:1",), "other", fallback="q"
+    )
+    assert make_evidence_key((), "boom") == make_evidence_key((), "boom", fallback="other")
+
+
 def test_qemu_missing_binary_errors(tmp_path: Path) -> None:
     if shutil.which("qemu-system-x86_64") is not None:
         pytest.skip("qemu installed; missing-binary path not testable")

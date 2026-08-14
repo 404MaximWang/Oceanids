@@ -2,6 +2,13 @@
 
 Selected for regular untrusted workloads. Raises SandboxUnavailableError with a
 clear message when the bwrap binary is not installed.
+
+bwrap starts from an empty root: only explicitly bound paths exist inside.
+Besides the read-only target bind, we therefore bind the host system dirs an
+interpreter needs (/usr, /lib, /lib64, /bin, /sbin — whichever exist) and every
+existing absolute path on the command line at its original location (the probe
+script itself, an absolute interpreter binary), so commands composed on the
+host work unchanged inside.
 """
 
 import shutil
@@ -9,9 +16,12 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
-from oceanids.sandbox.base import ExecutionResult, SandboxUnavailableError
+from oceanids.sandbox.base import ExecutionResult, SandboxUnavailableError, to_text
 
 SANDBOX_TARGET = "/target"
+
+#: Host dirs an interpreter/runtime typically needs; bound read-only when present.
+_SYSTEM_BINDS = ("/usr", "/lib", "/lib64", "/bin", "/sbin")
 
 
 class BwrapSandbox:
@@ -28,21 +38,35 @@ class BwrapSandbox:
         self._target_root = target_root.resolve()
 
     def build_command(self, command: Sequence[str]) -> list[str]:
-        """Read-only bind of the target, private tmpfs, unshared namespaces."""
-        return [
-            self._binary,
-            "--die-with-parent",
-            "--unshare-all",
-            "--ro-bind",
-            str(self._target_root),
-            SANDBOX_TARGET,
+        """Read-only binds (system dirs, target, absolute path args), private tmpfs."""
+        argv = [self._binary, "--die-with-parent", "--unshare-all"]
+        for directory in _SYSTEM_BINDS:
+            if Path(directory).is_dir():
+                argv += ["--ro-bind", directory, directory]
+        argv += ["--ro-bind", str(self._target_root), SANDBOX_TARGET]
+        # Command args that name existing host files (probe script, absolute
+        # interpreter path) must exist inside at the same location.
+        for arg in command:
+            path = Path(arg)
+            if path.is_absolute() and path.exists():
+                argv += ["--ro-bind", str(path), str(path)]
+        argv += [
             "--tmpfs",
             "/tmp",
+            "--setenv",
+            "OCEANIDS_TARGET",
+            SANDBOX_TARGET,
+            # The probe lives outside /target: its sys.path[0] is its own dir,
+            # so target imports need this knob (same role as in LocalSandbox).
+            "--setenv",
+            "PYTHONPATH",
+            SANDBOX_TARGET,
             "--chdir",
             SANDBOX_TARGET,
             "--",
             *command,
         ]
+        return argv
 
     def run(self, command: Sequence[str], *, timeout_s: int) -> ExecutionResult:
         try:
@@ -53,9 +77,15 @@ class BwrapSandbox:
                 timeout=timeout_s,
                 check=False,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            # Keep partial output: a hang-style probe prints its markers BEFORE
+            # hanging, and the checker reads them from the captured text.
             return ExecutionResult(
-                exit_code=-1, stdout="", stderr="", workdir=SANDBOX_TARGET, timed_out=True
+                exit_code=-1,
+                stdout=to_text(exc.stdout),
+                stderr=to_text(exc.stderr),
+                workdir=SANDBOX_TARGET,
+                timed_out=True,
             )
         return ExecutionResult(
             exit_code=proc.returncode,

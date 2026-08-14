@@ -12,17 +12,9 @@ import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from oceanids.sandbox.base import ExecutionResult
+from oceanids.sandbox.base import ExecutionResult, to_text
 
 TARGET_DIR_NAME = "target"
-
-
-def _to_text(data: str | bytes | None) -> str:
-    if data is None:
-        return ""
-    if isinstance(data, bytes):
-        return data.decode("utf-8", "replace")
-    return data
 
 
 class LocalSandbox:
@@ -54,8 +46,8 @@ class LocalSandbox:
             except subprocess.TimeoutExpired as exc:
                 return ExecutionResult(
                     exit_code=-1,
-                    stdout=_to_text(exc.stdout),
-                    stderr=_to_text(exc.stderr),
+                    stdout=to_text(exc.stdout),
+                    stderr=to_text(exc.stderr),
                     workdir=str(workdir),
                     timed_out=True,
                 )

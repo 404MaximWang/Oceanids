@@ -96,7 +96,31 @@ def extract_top_frames(text: str, *, workdir: str = "") -> tuple[str, ...]:
     return tuple(frames)
 
 
-def make_evidence_key(frames: Sequence[str], stderr: str, *, workdir: str = "") -> str:
-    """Stable dedup key: violation point / top-3 stack frames, hashed."""
-    basis = "|".join(frames) if frames else stderr.replace(workdir, "$WORK")[:500]
+def make_evidence_key(
+    frames: Sequence[str], stderr: str, *, workdir: str = "", fallback: str = ""
+) -> str:
+    """Stable dedup key: violation point / top-3 stack frames, hashed.
+
+    When neither frames nor stderr carry any signal (a silent crash: bare
+    non-zero exit, empty output), the per-candidate ``fallback`` identity keeps
+    the key unique — a constant empty-input hash would make evidence dedup
+    swallow DISTINCT bugs as duplicates of the first silent crash.
+    """
+    if frames:
+        basis = "|".join(frames)
+    else:
+        # str.replace with an empty pattern inserts everywhere — only
+        # normalise when there is a real workdir prefix to strip.
+        normalized = stderr.replace(workdir, "$WORK") if workdir else stderr
+        stripped = normalized.strip()
+        basis = stripped[:500] if stripped else f"silent:{fallback}"
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()
+
+
+def to_text(data: str | bytes | None) -> str:
+    """Decode captured subprocess output (None/bytes/str) to text."""
+    if data is None:
+        return ""
+    if isinstance(data, bytes):
+        return data.decode("utf-8", "replace")
+    return data
