@@ -63,9 +63,11 @@ def dispatch(index: FunctionIndex, scope: str | None = None) -> list[Task]:
 
     ``scope`` is a target-relative POSIX directory (the --submodule option);
     when set, only files under it become tasks. The index itself always
-    covers the whole tree so the project overview stays global.
+    covers the whole tree so the project overview stays global. "." and ""
+    mean the target root — same as no scope.
     """
-    prefix = None if scope is None else scope.rstrip("/") + "/"
+    normalized = None if scope in (None, "", ".") else scope
+    prefix = None if normalized is None else normalized.strip("/") + "/"
     return [
         Task(path=file.path, language=file.language, functions=file.functions)
         for file in index.files

@@ -27,6 +27,18 @@ def test_existing_overview_is_reused(tmp_path: Path) -> None:
     assert llm.calls == []  # no regeneration when the file is already there
 
 
+def test_empty_overview_file_is_regenerated(tmp_path: Path) -> None:
+    """A zero-byte leftover must not be injected into every later prompt."""
+    path = tmp_path / "overview.md"
+    path.write_text("", encoding="utf-8")
+    llm = MockLLM(routes=[], default="# regenerated\n")
+
+    text = load_or_generate(_index(), llm, path)
+
+    assert text == "# regenerated\n"
+    assert len(llm.calls) == 1
+
+
 def test_missing_overview_is_generated_and_written(tmp_path: Path) -> None:
     path = tmp_path / "overview.md"
     llm = MockLLM(routes=[], default="# generated overview\n")

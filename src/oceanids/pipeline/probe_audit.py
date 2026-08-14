@@ -21,11 +21,14 @@ Examples of valid responses (reply with ONLY the JSON object, no markdown or pro
 
 {"verdict": "ok", "feedback": ""}
 
-{"verdict": "invalid", "feedback": "The probe hard-codes the buggy output as the expected result, so it cannot distinguish a fix from the bug."}
+{"verdict": "invalid", "feedback": "The probe hard-codes the buggy output as \
+the expected result, so it cannot distinguish a fix from the bug."}
 
-{"verdict": "invalid", "feedback": "The trigger input never reaches the vulnerable path because the function returns early on empty input."}
+{"verdict": "invalid", "feedback": "The trigger input never reaches the \
+vulnerable path because the function returns early on empty input."}
 
-Important: feedback is a JSON string. If it contains quotes or backslashes they must be escaped, e.g.: \\" and \\\\\\."""
+Important: feedback is a JSON string. If it contains quotes or backslashes \
+they must be escaped, e.g.: \\" and \\\\\\."""
 
 
 class AuditVerdict:
@@ -71,7 +74,9 @@ def audit_probe(
     try:
         source = (target_root / candidate.file).read_text(encoding="utf-8", errors="replace")
     except OSError:
-        source = "<target source unavailable>"
+        # No target source, no audit — checks (a) and (b) would be meaningless.
+        # Treat as "auditor unavailable": the candidate stays pending.
+        return None
     prompt = (
         f"AUDIT probe for candidate in file {candidate.file}, function {candidate.function}.\n"
         f"Project overview (overview.md):\n{overview}\n\n"

@@ -55,6 +55,9 @@ class APILLM:
             ChatCompletionUserMessageParam(role="user", content=prompt)
         ]
         response = self._client.chat.completions.create(model=self._cfg.model, messages=messages)
+        if not response.choices:
+            # Content filtering and some proxies answer with zero choices.
+            raise LLMBackendError("backend 'api' returned no choices")
         content: str | None = response.choices[0].message.content
         if content is None:
             raise LLMBackendError("backend 'api' returned an empty completion")

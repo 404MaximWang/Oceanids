@@ -149,14 +149,21 @@ HANDLERS: dict[str, LanguageHandler] = {
 
 
 def build_function_index(root: Path) -> FunctionIndex:
-    """Walk ``root`` and index every recognised source file's functions."""
+    """Walk ``root`` and index every recognised source file's functions.
+
+    Symlinks are never followed (Python 3.12's rglob follows them): a link
+    pointing outside the target would leak foreign files into the index, and a
+    link cycle would loop the walk forever.
+    """
     files: list[FileIndex] = []
     for path in sorted(root.rglob("*")):
-        if not path.is_file():
+        if path.is_symlink() or not path.is_file():
             continue
         rel = path.relative_to(root)
         if any(part.startswith(".") or part in _SKIP_DIRS for part in rel.parts[:-1]):
             continue
+        if any(root.joinpath(*rel.parts[:i]).is_symlink() for i in range(1, len(rel.parts))):
+            continue  # reached through a symlinked directory
         language = EXT_TO_LANG.get(path.suffix.lower())
         if language is None:
             continue
@@ -167,7 +174,7 @@ def build_function_index(root: Path) -> FunctionIndex:
             FileIndex(
                 path=rel.as_posix(),
                 language=language,
-                line_count=text.count("\n") + 1,
+                line_count=len(text.splitlines()),
                 functions=None if spans is None else tuple(spans),
             )
         )

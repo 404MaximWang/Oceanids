@@ -135,3 +135,17 @@ def test_explorer_rejects_cwe_id_outside_subset(tmp_path: Path) -> None:
     assert stats.candidates_new == 0
     assert stats.llm_failures == 2
     assert store.count() == 0
+
+
+def test_explorer_rejects_blank_text_fields(tmp_path: Path) -> None:
+    target = _target(tmp_path)
+    tasks = dispatch(build_function_index(target))
+    store, explored = _stores(tmp_path)
+    issue = (
+        '[{"function": "   ", "cwe_id": 369, "bug_category": "x",'
+        ' "description": "d", "trigger": "t"}]'
+    )
+    llm = MockLLM(routes=[], default=issue)
+    stats = explore(target, tasks, llm, store, explored, pool_size=2, max_retries=1)
+    assert stats.candidates_new == 0
+    assert store.count() == 0

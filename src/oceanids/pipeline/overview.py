@@ -6,9 +6,10 @@ injected into the context of every later agent (explorer, probe generator, probe
 auditor).
 
 The document lives at ``<target>/.oceanids/overview.md`` (artifacts anchor at the
-ORIGINAL target, so it survives across runs). Resume semantics: an existing file
-is reused as-is. A missing file is generated; when generation produces nothing,
-it is retried exactly once; still missing after that — OverviewError, abort.
+ORIGINAL target, so it survives across runs). Resume semantics: an existing
+non-empty file is reused as-is. A missing or empty file is generated; when
+generation produces nothing, it is retried exactly once; still missing after
+that — OverviewError, abort.
 """
 
 from pathlib import Path
@@ -50,8 +51,8 @@ def load_or_generate(index: FunctionIndex, llm: LLMClient, path: Path) -> str:
     Generation gets one retry; a still-missing/empty document after that raises
     OverviewError — the caller aborts the run.
     """
-    if path.exists():
-        return path.read_text(encoding="utf-8")
+    if path.exists() and (text := path.read_text(encoding="utf-8")).strip():
+        return text  # an existing non-empty document is reused as-is
     prompt = _prompt(index)
     for _attempt in range(2):  # first try + exactly one retry
         try:

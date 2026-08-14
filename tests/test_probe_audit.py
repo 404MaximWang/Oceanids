@@ -9,8 +9,9 @@ from oceanids.config import PathsCfg, RunCfg, Settings
 from oceanids.db import CandidateStore, ConfirmedStore, Database
 from oceanids.llm.base import StageClients
 from oceanids.llm.mock import MockLLM
-from oceanids.models import CandidateStatus
+from oceanids.models import CandidateIssue, CandidateStatus, Probe
 from oceanids.orchestrator import run_pipeline
+from oceanids.pipeline.probe_audit import audit_probe
 from oceanids.sandbox.base import PROBE_REACHED_MARKER, PROBE_SETUP_MARKER
 
 FIXTURE = Path(__file__).parent / "fixtures" / "vuln_app"
@@ -169,3 +170,16 @@ def test_audit_garbage_contract_leaves_candidate_pending(tmp_path: Path) -> None
     assert summary.audit_rejected == 0  # not rejected — just not actionable this run
     candidate = CandidateStore(Database(Path(settings.paths.db))).all()[0]
     assert candidate.status is CandidateStatus.PENDING
+
+
+def test_audit_returns_none_when_target_source_unreadable(tmp_path: Path) -> None:
+    """No target source, no audit: the candidate stays pending instead of a vacuous ok."""
+    candidate = CandidateIssue(
+        id=1, file="gone.py", function="f", cwe_id=369,
+        bug_category="c", description="d", trigger="t",
+    )
+    probe = Probe(candidate_id=1, interpreter=(sys.executable,), script="print(1)")
+    llm = MockLLM(routes=[], default='{"verdict": "ok", "feedback": ""}')
+
+    assert audit_probe(candidate, probe, tmp_path, llm) is None
+    assert llm.calls == []  # the auditor is never asked without the source

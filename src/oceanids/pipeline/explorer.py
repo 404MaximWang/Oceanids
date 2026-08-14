@@ -47,10 +47,10 @@ def _validate_issues(data: Json) -> list[CandidateIssue]:
         if not isinstance(cwe_id, int) or isinstance(cwe_id, bool) or not is_valid(cwe_id):
             raise ValueError(f"cwe_id must be an integer from the CWE subset, got {cwe_id!r}")
         if not all(
-            isinstance(item[key], str) and item[key]
+            isinstance(item[key], str) and item[key].strip()
             for key in ("function", "bug_category", "description", "trigger")
         ):
-            raise ValueError("issue text fields must be non-empty strings")
+            raise ValueError("issue text fields must be non-blank strings")
         issues.append(
             CandidateIssue(
                 file="",  # filled by the caller

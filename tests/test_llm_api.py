@@ -65,6 +65,15 @@ def test_success_message_shape() -> None:
     assert call["messages"] == [{"role": "user", "content": "the prompt"}]
 
 
+def test_empty_choices_raises_backend_error() -> None:
+    """Zero choices (content filtering / proxies) is a backend error, not an IndexError."""
+    completions = SimpleNamespace(create=lambda *, model, messages: SimpleNamespace(choices=[]))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    llm = APILLM(_cfg(), client=client, sleeper=lambda _s: None, jitter=lambda: 0.0)
+    with pytest.raises(LLMBackendError, match="no choices"):
+        llm.complete("p")
+
+
 def test_rate_limit_retries_with_backoff() -> None:
     llm, completions, sleeps = _make([_rate_limit_error(), _rate_limit_error(), "ok"])
     assert llm.complete("p") == "ok"
