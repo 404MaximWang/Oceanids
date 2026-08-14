@@ -82,3 +82,12 @@ def test_env_overlay_maps_stage_fields_and_api_key(monkeypatch: pytest.MonkeyPat
     assert settings.run.auditor_llm == "api"
     assert settings.llm.api.api_key == "secret-from-env"
     assert settings.run.probe_llm is None  # untouched stays None -> run.llm default
+
+
+def test_cli_override_layer_validates_assignment() -> None:
+    """Direct field assignment (the CLI override layer) honors Field constraints."""
+    from pydantic import ValidationError
+
+    settings = Settings()
+    with pytest.raises(ValidationError):
+        settings.run.pool_size = 0

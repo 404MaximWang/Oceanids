@@ -4,6 +4,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from oceanids.config import Settings, load_settings
 from oceanids.llm.api import APILLM
 from oceanids.llm.base import LLMClient, StageClients
@@ -108,17 +110,22 @@ def main(argv: list[str] | None = None) -> int:
         if args.tmux:
             return launch_in_tmux(list(argv) if argv is not None else sys.argv[1:])
         settings = load_settings()
-        # CLI flags override the layered config.
-        if args.db is not None:
-            settings.paths.db = str(args.db)
-        if args.sandbox is not None:
-            settings.run.sandbox = args.sandbox
-        if args.pool_size is not None:
-            settings.run.pool_size = args.pool_size
-        if args.verify_pool_size is not None:
-            settings.run.verify_pool_size = args.verify_pool_size
-        if args.submodule is not None:
-            settings.run.submodule = _resolve_submodule(args.target, args.submodule)
+        # CLI flags override the layered config; assignment validation (pydantic
+        # validate_assignment) turns bad values into a readable exit, not a
+        # crash deep in the pipeline.
+        try:
+            if args.db is not None:
+                settings.paths.db = str(args.db)
+            if args.sandbox is not None:
+                settings.run.sandbox = args.sandbox
+            if args.pool_size is not None:
+                settings.run.pool_size = args.pool_size
+            if args.verify_pool_size is not None:
+                settings.run.verify_pool_size = args.verify_pool_size
+            if args.submodule is not None:
+                settings.run.submodule = _resolve_submodule(args.target, args.submodule)
+        except ValidationError as exc:
+            raise SystemExit(f"oceanids: invalid CLI override\n{exc}") from None
         clients = build_stage_clients(
             settings,
             unified=args.llm,

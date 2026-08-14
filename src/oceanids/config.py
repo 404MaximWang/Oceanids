@@ -43,9 +43,13 @@ BackendName = Literal["mock", "api", "pi"]
 
 
 class _Section(BaseModel):
-    """Base for config sections: unknown keys are errors, not silent defaults."""
+    """Base for config sections: unknown keys are errors, not silent defaults.
 
-    model_config = ConfigDict(extra="forbid")
+    validate_assignment keeps the CLI override layer (which assigns fields
+    directly, cli.main) under the same Field constraints as the toml/env layers.
+    """
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
 
 class APICfg(_Section):
