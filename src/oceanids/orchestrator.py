@@ -44,11 +44,19 @@ from oceanids.sandbox.qemu import QemuSandbox
 
 
 def resolve_artifact_path(target: Path, configured: str) -> Path:
-    """Resolve one ``paths.*`` value: absolute stays, relative goes under the artifacts dir."""
+    """Resolve one ``paths.*`` value: absolute stays, relative goes under the artifacts dir.
+
+    A relative value must stay inside <target>/.oceanids/ — a ``..`` escape is
+    rejected as a config error instead of being silently honored.
+    """
     path = Path(configured)
     if path.is_absolute():
         return path
-    return target / ARTIFACTS_DIRNAME / path
+    root = (target / ARTIFACTS_DIRNAME).resolve()
+    resolved = (root / path).resolve()
+    if resolved != root and root not in resolved.parents:
+        raise ValueError(f"artifact path {configured!r} escapes {root}")
+    return resolved
 
 
 @dataclass(frozen=True)
@@ -113,6 +121,8 @@ def _verify_chain(
     environment intact — attempt counted, candidate stays pending), or
     "inconclusive" (attempt budget exhausted without evidence either way).
     """
+    if candidate.id is None:
+        raise ValueError("verify chain only accepts persisted candidates")
     probe = probe_gen.generate_probe(
         candidate, clients.probe, probes_dir,
         max_retries=settings.run.probe_retries, overview=overview,
@@ -135,6 +145,8 @@ def _verify_chain(
         )
         if outcome == "rejected":
             return "audit_rejected"
+        if outcome == "generator_refused":
+            return "generator_refused"
         if probe is None:
             return "pending"  # auditor/generator unavailable; stays pending
     verdict = checker.verify(candidate, probe)
@@ -312,8 +324,9 @@ def _audit_gate(
 
     outcome is "ok" (probe passed, possibly after rewrites), "rejected"
     (rewrite budget exhausted — candidate marked rejected, auditor feedback
-    kept as the reason), or "pending" (auditor/generator unavailable — candidate
-    stays pending for a later run).
+    kept as the reason), "generator_refused" (the generator refused mid-gate —
+    candidate rejected with the refusal reason), or "pending"
+    (auditor/generator unavailable — candidate stays pending for a later run).
     """
     if candidate.id is None:
         raise ValueError("audit gate only accepts persisted candidates")
@@ -344,12 +357,23 @@ def _audit_gate(
             f"({rewrites_left} left): {verdict.feedback}",
             file=sys.stderr,
         )
-        current = probe_gen.generate_probe(
+        rewritten = probe_gen.generate_probe(
             candidate, clients.probe, probes_dir,
             max_retries=settings.run.probe_retries,
             rewrite_feedback=verdict.feedback,
             overview=overview,
         )
+        if isinstance(rewritten, ProbeRefusal):
+            # A refusal mid-gate is still the generator's auditable opinion,
+            # not an audit rejection — keep the tally honest.
+            candidates.update_status(candidate.id, CandidateStatus.REJECTED, rewritten.reason)
+            print(
+                f"oceanids: candidate #{candidate.id} ({candidate.function}) rejected: "
+                f"generator refused during audit-gate rewrite — {rewritten.reason}",
+                file=sys.stderr,
+            )
+            return ("generator_refused", None)
+        current = rewritten
     return ("pending", None)
 
 
