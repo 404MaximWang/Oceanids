@@ -1,7 +1,7 @@
 """Core data model shared by every pipeline phase.
 
 The schema stays language-agnostic on purpose: a candidate is identified by
-(file, function, bug_category), and a probe is a self-contained script whose
+(file, function, cwe_id), and a probe is a self-contained script whose
 interpreter is just a command template.
 """
 
@@ -48,11 +48,12 @@ class VerdictKind(enum.StrEnum):
 class CandidateIssue:
     """One raw finding reported by an explorer agent (table candidate_issues).
 
-    Dedup key is (function, cwe_id); bug_category stays a free-text label from
-    the exploration stage and plays no role in dedup. ``reject_reason`` records
-    why a rejected candidate was rejected (auditor budget exhausted, generator
-    refusal, or a clean checker run). ``verify_attempts`` counts checker runs
-    that produced no evidence either way (setup failure, bare timeout).
+    Dedup key is (file, function, cwe_id); bug_category stays a free-text label
+    from the exploration stage and plays no role in dedup. ``reject_reason``
+    records why a rejected candidate was rejected (auditor budget exhausted,
+    generator refusal, or a clean checker run). ``verify_attempts`` counts
+    checker runs that produced no evidence either way (setup failure, bare
+    timeout).
     """
 
     file: str

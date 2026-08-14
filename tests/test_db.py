@@ -11,9 +11,11 @@ def _stores(tmp_path: Path) -> tuple[CandidateStore, ConfirmedStore]:
     return CandidateStore(db), ConfirmedStore(db)
 
 
-def _issue(function: str = "f", category: str = "cat", cwe_id: int = 369) -> CandidateIssue:
+def _issue(
+    function: str = "f", category: str = "cat", cwe_id: int = 369, file: str = "a.py"
+) -> CandidateIssue:
     return CandidateIssue(
-        file="a.py",
+        file=file,
         function=function,
         cwe_id=cwe_id,
         bug_category=category,
@@ -26,14 +28,22 @@ def test_candidate_insert_dedups_on_function_and_cwe(tmp_path: Path) -> None:
     candidates, _ = _stores(tmp_path)
     first = candidates.insert(_issue())
     assert first is not None
-    # Same (function, cwe_id) key: INSERT OR IGNORE swallows it — even when the
-    # free-text bug_category label differs.
+    # Same (file, function, cwe_id) key: INSERT OR IGNORE swallows it — even
+    # when the free-text bug_category label differs.
     assert candidates.insert(_issue(category="other-label")) is None
     # Same function, different cwe_id: a distinct candidate.
     assert candidates.insert(_issue(cwe_id=476)) is not None
     # Different function, same cwe_id: also distinct.
     assert candidates.insert(_issue(function="g")) is not None
     assert candidates.count() == 3
+
+
+def test_candidate_insert_dedup_key_includes_file(tmp_path: Path) -> None:
+    """Same-named functions in different files are distinct candidates."""
+    candidates, _ = _stores(tmp_path)
+    assert candidates.insert(_issue(file="a.py")) is not None
+    assert candidates.insert(_issue(file="b.py")) is not None
+    assert candidates.count() == 2
 
 
 def test_candidate_status_flow(tmp_path: Path) -> None:

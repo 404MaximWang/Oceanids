@@ -1,13 +1,12 @@
 """SQLite persistence layer.
 
 Schema mirrors docs/arch.puml: candidate_issues dedupes at write time via
-UNIQUE(function, cwe_id) + INSERT OR IGNORE; confirmed_bugs dedupes by
+UNIQUE(file, function, cwe_id) + INSERT OR IGNORE; confirmed_bugs dedupes by
 evidence_key. Connections are created per thread (the explorer pool writes from
 a ThreadPoolExecutor) and the database runs in WAL mode.
 
-Schema note: the candidate dedup key is UNIQUE(function, cwe_id) since the CWE
-table was introduced, and the classifier stage (with confirmed_bugs'
-cwe_id/severity/priority columns) has since been removed entirely — CWE typing
+Schema note: the candidate dedup key includes ``file`` — same-named functions
+in different files (main, close, parse) are distinct candidates. CWE typing
 lives only on candidate_issues. There is deliberately NO migration logic — the
 database is a disposable run artifact; delete old oceanids.db files.
 """
@@ -31,7 +30,7 @@ CREATE TABLE IF NOT EXISTS candidate_issues (
         CHECK (status IN ('pending', 'rejected', 'confirmed', 'duplicate', 'inconclusive')),
     reject_reason TEXT,
     verify_attempts INTEGER NOT NULL DEFAULT 0,
-    UNIQUE (function, cwe_id)
+    UNIQUE (file, function, cwe_id)
 );
 CREATE TABLE IF NOT EXISTS confirmed_bugs (
     id INTEGER PRIMARY KEY,
@@ -114,7 +113,7 @@ class CandidateStore:
         self._db = db
 
     def insert(self, issue: CandidateIssue) -> int | None:
-        """INSERT OR IGNORE on UNIQUE(function, cwe_id); None when it was a duplicate."""
+        """INSERT OR IGNORE on UNIQUE(file, function, cwe_id); None on a duplicate."""
         cur = self._db.conn.execute(
             """
             INSERT OR IGNORE INTO candidate_issues

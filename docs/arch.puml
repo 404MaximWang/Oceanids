@@ -77,7 +77,7 @@ SA3 --> T1 : INSERT
 ' 法一: 写入时键去重
 note bottom of T1
   法一: 键去重
-  UNIQUE(函数,CWE id)
+  UNIQUE(文件,函数,CWE id)
   INSERT OR IGNORE
 end note
 
